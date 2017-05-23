@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ddd;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .bodymovin{
+            background-color:#fff;
+            width:100%;
+            height:100%;
+            /*width:800px;
+            height:500px;*/
+            display:block;
+            overflow: hidden;
+            transform: translate3d(0,0,0);
+            margin: auto;
+            opacity: 1;
+        }
+    </style>
+    <script src="bodymovin.js"></script>
+</head>
+<body>
+<div id="bodymovin1" class="bodymovin" style="position: absolute;"></div>
+<div id="bodymovin2" class="bodymovin" style="position: absolute; display: none;"></div>
+<div id="bodymovin3" class="bodymovin" style="position: absolute; display: none;"></div>
+<div id="bodymovin4" class="bodymovin" style="position: absolute; display: none;"></div>
+
+<script>
+
+    onboarding1 = bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin1'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'onboarding_page_simple.json'
+    });
+
+    onboarding2 = bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin2'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: false,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'onboarding_page_shop.json'
+    });
+
+    onboarding3 = bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin3'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: false,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'onboarding_page_open.json'
+    });
+
+    onboarding4 = bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin4'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: false,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'onboarding_page_safe.json'
+    });
+
+
+    onboarding1.onComplete = function() {
+        //console.log("completed anim 1");
+        this.stop();
+        document.getElementById("bodymovin1").style.display = "none";
+        document.getElementById("bodymovin2").style.display = "block";
+        onboarding2.goToAndPlay(0, true);
+    }
+
+    onboarding2.onComplete = function() {
+        //console.log("completed anim 2");
+        this.stop();
+        document.getElementById("bodymovin2").style.display = "none";
+        document.getElementById("bodymovin3").style.display = "block";
+        onboarding3.goToAndPlay(0, true);
+    }
+
+    onboarding3.onComplete = function() {
+        //console.log("completed anim 3");
+        this.stop();
+        document.getElementById("bodymovin3").style.display = "none";
+        document.getElementById("bodymovin4").style.display = "block";
+        onboarding4.goToAndPlay(0, true);
+    }
+
+    onboarding4.onComplete = function() {
+        //console.log("completed anim 3");
+        this.stop();
+        document.getElementById("bodymovin4").style.display = "none";
+        document.getElementById("bodymovin1").style.display = "block";
+        onboarding1.goToAndPlay(0, true);
+    }
+
+
+</script>
+</body>
+</html>
