@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ffffff;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        #bodymovin{
+            width:80px;
+            height:80px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -40px;
+            margin-left: -40px;
+        }
+
+        #round_bg {
+            width: 104px;
+            height:104px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -52px;
+            margin-left: -52px;
+            background-color: #ffffff;
+            border-radius: 50%;
+        }
+
+        #qr_code {
+            width: 336px;
+            height:336px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -168px;
+            margin-left: -168px;
+            background-image: url('qr_code.svg');
+            background-repeat: no-repeat;
+            background-size: cover;
+        }
+    </style>
+    <script src="bodymovin.js"></script>
+</head>
+<body>
+    <div id="qr_code">
+        <div id="round_bg">
+            <div id="bodymovin"></div>
+        </div>
+    </div>
+
+
+<script>
+
+    bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'smartphone_authorize_qr.json'
+    });
+
+</script>
+</body>
+</html>
