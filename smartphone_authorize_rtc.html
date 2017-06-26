@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ffffff;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        #bodymovin{
+            width:320px;
+            height:320px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -160px;
+            margin-left: -160px;
+        }
+    </style>
+    <script src="bodymovin.js"></script>
+</head>
+<body>
+    <div id="qr_code">
+        <div id="round_bg">
+            <div id="bodymovin"></div>
+        </div>
+    </div>
+
+
+<script>
+
+    bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'smartphone_authorize_rtc.json'
+    });
+
+</script>
+</body>
+</html>
