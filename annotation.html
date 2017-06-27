@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ffffff;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .annotation{
+            width:80px;
+            height:80px;
+            position: absolute;
+            top: 50%;
+            margin-top: -80px;
+            margin-left: -40px;
+        }
+        .android{
+            left:33%;
+        }
+        .ios{
+            left:66%;
+        }
+    </style>
+    <script src="bodymovin.js"></script>
+</head>
+<body>
+    <div class="annotation android" id="annotation_down_android" onclick="animPlay()"></div>
+    <div class="annotation ios" id="annotation_down_ios" onclick="animPlay()"></div>
+    <div class="annotation android" style="display:none;" id="annotation_up_android" onclick="animPlay()"></div>
+    <div class="annotation ios" style="display:none;" id="annotation_up_ios" onclick="animPlay()"></div>
+
+
+<script>
+    var down = true;
+    var annotation_down_android = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_down_android'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'annotation_down_android.json'
+    });
+    var annotation_down_ios = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_down_ios'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'annotation_down_ios.json'
+    });
+    var annotation_up_android = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_up_android'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'annotation_up_android.json'
+    });
+    var annotation_up_ios = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_up_ios'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'annotation_up_ios.json'
+    });
+
+    function animPlay() {
+        if (down) {
+            document.getElementById("annotation_down_android").style.display = "none";
+            document.getElementById("annotation_down_ios").style.display = "none";
+            document.getElementById("annotation_up_android").style.display = "block";
+            document.getElementById("annotation_up_ios").style.display = "block";
+
+            annotation_up_android.goToAndPlay(0, false);
+            annotation_up_ios.goToAndPlay(0, false);
+        } else {
+            document.getElementById("annotation_up_android").style.display = "none";
+            document.getElementById("annotation_up_ios").style.display = "none";
+            document.getElementById("annotation_down_android").style.display = "block";
+            document.getElementById("annotation_down_ios").style.display = "block";
+
+            annotation_down_android.goToAndPlay(0, false);
+            annotation_down_ios.goToAndPlay(0, false);
+        }
+        down = !down;
+
+        
+    }
+
+</script>
+</body>
+</html>
