@@ -11,8 +11,6 @@
         }
 
         #bodymovin{
-            width:320px;
-            height:320px;
             position: absolute;
             top: 50%;
             left: 50%;
@@ -25,25 +23,24 @@
 <body>
     <div id="bodymovin" onclick="startAnim()"></div>
 
+    <script>
+        var forward = 1;
+        var anim = bodymovin.loadAnimation({
+            container: document.getElementById('bodymovin'),
+            renderer: 'svg',
+            loop: false,
+            autoplay: false,
+            rendererSettings: {
+                progressiveLoad:false
+            },
+            path: 'operation_successful.json'
+        });
+        function startAnim() {
+            anim.play();
+            forward *= -1;
+            anim.setDirection(forward);
+        }
 
-<script>
-    var forward = 1;
-    var anim = bodymovin.loadAnimation({
-        container: document.getElementById('bodymovin'),
-        renderer: 'svg',
-        loop: false,
-        autoplay: false,
-        rendererSettings: {
-            progressiveLoad:false
-        },
-        path: 'operation_successful.json'
-    });
-    function startAnim() {
-        anim.play();
-        forward *= -1;
-        anim.setDirection(forward);
-    }
-
-</script>
+    </script>
 </body>
 </html>
