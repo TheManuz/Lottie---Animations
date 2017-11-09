@@ -1,4 +1,17 @@
-(function (root, factory) { if(typeof define === "function" && define.amd) { define( factory); } else if(typeof module === "object" && module.exports) { module.exports = factory(); } else { root.bodymovin = factory(); } }(window, function() {var svgNS = "http://www.w3.org/2000/svg";
+var window = (typeof window === "undefined") ? {} : window;
+(function(root, factory) {
+    if (typeof define === "function" && define.amd) {
+        define(factory);
+    } else if (typeof module === "object" && module.exports) {
+        module.exports = factory();
+    } else {
+        root.bodymovin = factory();
+    }
+}(window, function() {
+    var svgNS = "http://www.w3.org/2000/svg";
+
+var locationHref = '';
+
 var subframeEnabled = true;
 var expressionsPlugin;
 var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -38,7 +51,7 @@ BMMath.abs = function(val){
     return Math.abs(val);
 
 }
-var defaultCurveSegments = 75;
+var defaultCurveSegments = 150;
 var degToRads = Math.PI/180;
 var roundCorner = 0.5519;
 
@@ -116,6 +129,9 @@ function _addEventListener(eventName, callback){
     }
     this._cbs[eventName].push(callback);
 
+	return function() {
+		this.removeEventListener(eventName, callback);
+	}.bind(this);
 }
 
 function _removeEventListener(eventName,callback){
@@ -303,15 +319,6 @@ var fillColorToString = (function(){
 function RenderedFrame(tr,o) {
     this.tr = tr;
     this.o = o;
-}
-
-function LetterProps(o,sw,sc,fc,m,p){
-    this.o = o;
-    this.sw = sw;
-    this.sc = sc;
-    this.fc = fc;
-    this.m = m;
-    this.props = p;
 }
 
 function iterateDynamicProperties(num){
@@ -518,6 +525,7 @@ var Matrix = (function(){
                 this.props[14] = this.props[12] * c2 + this.props[13] * g2 + this.props[14] * k2 + this.props[15] * o2 ;
                 this.props[15] = this.props[12] * d2 + this.props[13] * h2 + this.props[14] * l2 + this.props[15] * p2 ;
             }
+            this._identityCalculated = false;
             return this;
         }
 
@@ -563,7 +571,19 @@ var Matrix = (function(){
         this.props[14] = m1 * c2 + n1 * g2 + o1 * k2 + p1 * o2 ;
         this.props[15] = m1 * d2 + n1 * h2 + o1 * l2 + p1 * p2 ;
 
+        this._identityCalculated = false;
         return this;
+    }
+
+    function isIdentity() {
+        if(!this._identityCalculated){
+            this._identity = !(this.props[0] !== 1 || this.props[1] !== 0 || this.props[2] !== 0 || this.props[3] !== 0
+                || this.props[4] !== 0 || this.props[5] !== 1 || this.props[6] !== 0 || this.props[7] !== 0
+                || this.props[8] !== 0 || this.props[9] !== 0 || this.props[10] !== 1 || this.props[11] !== 0
+                || this.props[12] !== 0 || this.props[13] !== 0 || this.props[14] !== 0 || this.props[15] !== 1);
+            this._identityCalculated = true;
+        }
+        return this._identity;
     }
 
     function clone(matr){
@@ -602,8 +622,7 @@ var Matrix = (function(){
         return x * this.props[2] + y * this.props[6] + z * this.props[10] + this.props[14];
     }
 
-    function inversePoints(pts){
-        //var determinant = this.a * this.d - this.b * this.c;
+    function inversePoint(pt) {
         var determinant = this.props[0] * this.props[5] - this.props[1] * this.props[4];
         var a = this.props[5]/determinant;
         var b = - this.props[1]/determinant;
@@ -611,17 +630,30 @@ var Matrix = (function(){
         var d = this.props[0]/determinant;
         var e = (this.props[4] * this.props[13] - this.props[5] * this.props[12])/determinant;
         var f = - (this.props[0] * this.props[13] - this.props[1] * this.props[12])/determinant;
+        return [pt[0] * a + pt[1] * c + e, pt[0] * b + pt[1] * d + f, 0];
+    }
+
+    function inversePoints(pts){
         var i, len = pts.length, retPts = [];
         for(i=0;i<len;i+=1){
-            retPts[i] = [pts[i][0] * a + pts[i][1] * c + e, pts[i][0] * b + pts[i][1] * d + f, 0]
+            retPts[i] = inversePoint(pts[i]);
         }
         return retPts;
     }
 
-    function applyToPointArray(x,y,z){
+    function applyToPointArray(x,y,z,dimensions){
+        if(dimensions && dimensions === 2) {
+            var arr = point_pool.newPoint();
+            arr[0] = x * this.props[0] + y * this.props[4] + z * this.props[8] + this.props[12]; 
+            arr[1] = x * this.props[1] + y * this.props[5] + z * this.props[9] + this.props[13]; 
+            return arr;    
+        }
         return [x * this.props[0] + y * this.props[4] + z * this.props[8] + this.props[12],x * this.props[1] + y * this.props[5] + z * this.props[9] + this.props[13],x * this.props[2] + y * this.props[6] + z * this.props[10] + this.props[14]];
     }
     function applyToPointStringified(x, y) {
+        if(this.isIdentity()) {
+            return x + ',' + y;
+        }
         return (bm_rnd(x * this.props[0] + y * this.props[4] + this.props[12]))+','+(bm_rnd(x * this.props[1] + y * this.props[5] + this.props[13]));
     }
 
@@ -672,7 +704,11 @@ var Matrix = (function(){
         this.clone = clone;
         this.cloneFromProps = cloneFromProps;
         this.inversePoints = inversePoints;
+        this.inversePoint = inversePoint;
         this._t = this.transform;
+        this.isIdentity = isIdentity;
+        this._identity = true;
+        this._identityCalculated = false;
 
         this.props = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
 
@@ -1148,7 +1184,25 @@ function bezFunction(){
     }
 
     function pointOnLine3D(x1,y1,z1, x2,y2,z2, x3,y3,z3){
-        return pointOnLine2D(x1,y1, x2,y2, x3,y3) && pointOnLine2D(x1,z1, x2,z2, x3,z3);
+        if(z1 === 0 && z2 === 0 && z3 === 0) {
+            return pointOnLine2D(x1,y1, x2,y2, x3,y3);
+        }
+        var dist1 = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2) + Math.pow(z2 - z1, 2));
+        var dist2 = Math.sqrt(Math.pow(x3 - x1, 2) + Math.pow(y3 - y1, 2) + Math.pow(z3 - z1, 2));
+        var dist3 = Math.sqrt(Math.pow(x3 - x2, 2) + Math.pow(y3 - y2, 2) + Math.pow(z3 - z2, 2));
+        var diffDist;
+        if(dist1 > dist2){
+            if(dist1 > dist3){
+                diffDist = dist1 - dist2 - dist3;
+            } else {
+                diffDist = dist3 - dist2 - dist1;
+            }
+        } else if(dist3 > dist2){
+            diffDist = dist3 - dist2 - dist1;
+        } else {
+            diffDist = dist2 - dist1 - dist3;
+        }
+        return diffDist > -0.0001 && diffDist < 0.0001;
     }
 
     /*function getEasingCurve(aa,bb,cc,dd,encodedFuncName) {
@@ -1396,7 +1450,11 @@ function dataFunctionManager(){
         var i = 0, len = comps.length;
         while(i<len){
             if(comps[i].id === id){
-                return comps[i].layers;
+                if(!comps[i].layers.__used) {
+                    comps[i].layers.__used = true;
+                    return comps[i].layers;
+                }
+                return JSON.parse(JSON.stringify(comps[i].layers));
             }
             i += 1;
         }
@@ -1507,6 +1565,28 @@ function dataFunctionManager(){
                 }
             }
         }
+    }())
+
+    var checkChars = (function() {
+        var minimumVersion = [4,7,99];
+        return function (animationData){
+            if(animationData.chars && !checkVersion(minimumVersion,animationData.v)){
+                var i, len = animationData.chars.length, j, jLen, k, kLen;
+                var pathData, paths;
+                for(i = 0; i < len; i += 1) {
+                    if(animationData.chars[i].data && animationData.chars[i].data.shapes) {
+                        paths = animationData.chars[i].data.shapes[0].it;
+                        jLen = paths.length;
+
+                        for(j = 0; j < jLen; j += 1) {
+                            pathData = paths[j].ks.k;
+                            convertPathsToAbsoluteValues(paths[j].ks.k);
+                        }
+                    }
+                }
+            }
+        }
+
     }())
 
     var checkColors = (function(){
@@ -1805,6 +1885,7 @@ function dataFunctionManager(){
         }
         checkColors(animationData);
         checkText(animationData);
+        checkChars(animationData);
         checkShapes(animationData);
         completeLayers(animationData.layers, animationData.assets, fontManager);
         animationData.__complete = true;
@@ -1884,7 +1965,8 @@ function dataFunctionManager(){
                 }
                 len = documentData.t.length;
             }
-            lineWidth = 0;
+            var trackingOffset = documentData.tr/1000*documentData.s;
+            lineWidth = - trackingOffset;
             cLength = 0;
             for (i = 0;i < len ;i += 1) {
                 newLineFlag = false;
@@ -1893,7 +1975,7 @@ function dataFunctionManager(){
                 }else if(documentData.t.charCodeAt(i) === 13){
                     lineWidths.push(lineWidth);
                     maxLineWidth = lineWidth > maxLineWidth ? lineWidth : maxLineWidth;
-                    lineWidth = 0;
+                    lineWidth = - 2 * trackingOffset;
                     val = '';
                     newLineFlag = true;
                     currentLine += 1;
@@ -1910,7 +1992,7 @@ function dataFunctionManager(){
                 }
 
                 //
-                lineWidth += cLength;
+                lineWidth += cLength + trackingOffset;
                 letters.push({l:cLength,an:cLength,add:currentSize,n:newLineFlag, anIndexes:[], val: val, line: currentLine});
                 if(anchorGrouping == 2){
                     currentSize += cLength;
@@ -2009,6 +2091,7 @@ function dataFunctionManager(){
                 data.singleShape = true;
             }
             documentData.yOffset = documentData.lh || documentData.s*1.2;
+            documentData.ls = documentData.ls || 0;
             documentData.ascent = fontData.ascent*documentData.s/100;
         }
 
@@ -2060,7 +2143,7 @@ var FontManager = (function(){
                 loadedCount -= 1;
                 continue;
             }
-            if(this.fonts[i].fOrigin === 't'){
+            if(this.fonts[i].fOrigin === 't' || this.fonts[i].origin === 2){
                 if(window.Typekit && window.Typekit.load && this.typekitLoaded === 0){
                     this.typekitLoaded = 1;
                     try{window.Typekit.load({
@@ -2073,7 +2156,7 @@ var FontManager = (function(){
                 if(this.typekitLoaded === 2) {
                     this.fonts[i].loaded = true;
                 }
-            } else if(this.fonts[i].fOrigin === 'n'){
+            } else if(this.fonts[i].fOrigin === 'n' || this.fonts[i].origin === 0){
                 this.fonts[i].loaded = true;
             } else{
                 node = this.fonts[i].monoCase.node;
@@ -2141,19 +2224,19 @@ var FontManager = (function(){
             fontArr[i].sansCase = setUpNode(fontArr[i].fFamily,'sans-serif');
             if(!fontArr[i].fPath) {
                 fontArr[i].loaded = true;
-            }else if(fontArr[i].fOrigin === 'p'){
+            }else if(fontArr[i].fOrigin === 'p' || fontArr[i].origin === 3){
                 var s = document.createElement('style');
                 s.type = "text/css";
                 s.innerHTML = "@font-face {" + "font-family: "+fontArr[i].fFamily+"; font-style: normal; src: url('"+fontArr[i].fPath+"');}";
                 defs.appendChild(s);
-            } else if(fontArr[i].fOrigin === 'g'){
+            } else if(fontArr[i].fOrigin === 'g' || fontArr[i].origin === 1){
                 //<link href='https://fonts.googleapis.com/css?family=Montserrat' rel='stylesheet' type='text/css'>
                 var l = document.createElement('link');
                 l.type = "text/css";
                 l.rel = "stylesheet";
                 l.href = fontArr[i].fPath;
                 defs.appendChild(l);
-            } else if(fontArr[i].fOrigin === 't'){
+            } else if(fontArr[i].fOrigin === 't' || fontArr[i].origin === 2){
                 //<link href='https://fonts.googleapis.com/css?family=Montserrat' rel='stylesheet' type='text/css'>
                 var sc = document.createElement('script');
                 sc.setAttribute('src',fontArr[i].fPath);
@@ -2245,10 +2328,9 @@ var PropertyFactory = (function(){
         }
         this.mdf = false;
         var frameNum = this.comp.renderedFrame - this.offsetTime;
-        if(frameNum === this.lastFrame || (this.lastFrame !== initFrame && ((this.lastFrame >= this.keyframes[this.keyframes.length- 1].t-this.offsetTime && frameNum >= this.keyframes[this.keyframes.length- 1].t-this.offsetTime) || (this.lastFrame < this.keyframes[0].t-this.offsetTime && frameNum < this.keyframes[0].t-this.offsetTime)))){
-
-        }else{
-            var i = 0,len = this.keyframes.length- 1,dir= 1,flag = true;
+        if(!(frameNum === this.lastFrame || (this.lastFrame !== initFrame && ((this.lastFrame >= this.keyframes[this.keyframes.length- 1].t-this.offsetTime && frameNum >= this.keyframes[this.keyframes.length- 1].t-this.offsetTime) || (this.lastFrame < this.keyframes[0].t-this.offsetTime && frameNum < this.keyframes[0].t-this.offsetTime))))){
+            var i = this.lastFrame < frameNum ? this._lastIndex : 0;
+            var len = this.keyframes.length- 1,flag = true;
             var keyData, nextKeyData;
 
             while(flag){
@@ -2264,13 +2346,15 @@ var PropertyFactory = (function(){
                     break;
                 }
                 if(i < len - 1){
-                    i += dir;
+                    i += 1;
                 }else{
                     flag = false;
                 }
             }
 
-            var k, kLen,perc,jLen, j = 0, fnc;
+            this._lastIndex = i;
+
+            var k, kLen,perc,jLen, j, fnc;
             if(keyData.to){
 
                 if(!keyData.bezierData){
@@ -2281,13 +2365,14 @@ var PropertyFactory = (function(){
                     var ind = frameNum >= nextKeyData.t-this.offsetTime ? bezierData.points.length - 1 : 0;
                     kLen = bezierData.points[ind].point.length;
                     for(k = 0; k < kLen; k += 1){
-                        this.v[k] = this.mult ? bezierData.points[ind].point[k]*this.mult : bezierData.points[ind].point[k];
                         this.pv[k] = bezierData.points[ind].point[k];
+                        this.v[k] = this.mult ? this.pv[k]*this.mult : this.pv[k];
                         if(this.lastPValue[k] !== this.pv[k]) {
                             this.mdf = true;
                             this.lastPValue[k] = this.pv[k];
                         }
                     }
+                    this._lastBezierData = null;
                 }else{
                     if(keyData.__fnct){
                         fnc = keyData.__fnct;
@@ -2299,17 +2384,17 @@ var PropertyFactory = (function(){
                     var distanceInLine = bezierData.segmentLength*perc;
 
                     var segmentPerc;
-                    var addedLength = 0;
-                    dir = 1;
+                    var addedLength =  (this.lastFrame < frameNum && this._lastBezierData === bezierData) ? this._lastAddedLength : 0;
+                    j =  (this.lastFrame < frameNum && this._lastBezierData === bezierData) ? this._lastPoint : 0;
                     flag = true;
                     jLen = bezierData.points.length;
                     while(flag){
-                        addedLength +=bezierData.points[j].partialLength*dir;
+                        addedLength +=bezierData.points[j].partialLength;
                         if(distanceInLine === 0 || perc === 0 || j == bezierData.points.length - 1){
                             kLen = bezierData.points[j].point.length;
                             for(k=0;k<kLen;k+=1){
-                                this.v[k] = this.mult ? bezierData.points[j].point[k]*this.mult : bezierData.points[j].point[k];
                                 this.pv[k] = bezierData.points[j].point[k];
+                                this.v[k] = this.mult ? this.pv[k]*this.mult : this.pv[k];
                                 if(this.lastPValue[k] !== this.pv[k]) {
                                     this.mdf = true;
                                     this.lastPValue[k] = this.pv[k];
@@ -2320,9 +2405,8 @@ var PropertyFactory = (function(){
                             segmentPerc = (distanceInLine-addedLength)/(bezierData.points[j+1].partialLength);
                             kLen = bezierData.points[j].point.length;
                             for(k=0;k<kLen;k+=1){
-                                this.v[k] = this.mult ? (bezierData.points[j].point[k] + (bezierData.points[j+1].point[k] - bezierData.points[j].point[k])*segmentPerc)*this.mult : bezierData.points[j].point[k] + (bezierData.points[j+1].point[k] - bezierData.points[j].point[k])*segmentPerc;
                                 this.pv[k] = bezierData.points[j].point[k] + (bezierData.points[j+1].point[k] - bezierData.points[j].point[k])*segmentPerc;
-
+                                this.v[k] = this.mult ? this.pv[k] * this.mult : this.pv[k];
                                 if(this.lastPValue[k] !== this.pv[k]) {
                                     this.mdf = true;
                                     this.lastPValue[k] = this.pv[k];
@@ -2330,60 +2414,52 @@ var PropertyFactory = (function(){
                             }
                             break;
                         }
-                        if(j < jLen - 1 && dir == 1 || j > 0 && dir == -1){
-                            j += dir;
+                        if(j < jLen - 1){
+                            j += 1;
                         }else{
                             flag = false;
                         }
                     }
+                    this._lastPoint = j;
+                    this._lastAddedLength = addedLength - bezierData.points[j].partialLength;
+                    this._lastBezierData = bezierData;
                 }
             }else{
-                var outX,outY,inX,inY, isArray = false, keyValue;
+                var outX,outY,inX,inY, keyValue;
                 len = keyData.s.length;
                 for(i=0;i<len;i+=1){
                     if(keyData.h !== 1){
-                        if(keyData.o.x instanceof Array){
-                            isArray = true;
-                            if(!keyData.__fnct){
-                                keyData.__fnct = [];
-                            }
-                            if(!keyData.__fnct[i]){
-                                outX = keyData.o.x[i] || keyData.o.x[0];
-                                outY = keyData.o.y[i] || keyData.o.y[0];
-                                inX = keyData.i.x[i] || keyData.i.x[0];
-                                inY = keyData.i.y[i] || keyData.i.y[0];
-                            }
-                        }else{
-                            isArray = false;
-                            if(!keyData.__fnct) {
-                                outX = keyData.o.x;
-                                outY = keyData.o.y;
-                                inX = keyData.i.x;
-                                inY = keyData.i.y;
-                            }
-                        }
-                        if(isArray){
-                            if(keyData.__fnct[i]){
-                                fnc = keyData.__fnct[i];
-                            }else{
-                                //fnc = bez.getEasingCurve(outX,outY,inX,inY);
-                                fnc = BezierFactory.getBezierEasing(outX,outY,inX,inY).get;
-                                keyData.__fnct[i] = fnc;
-                            }
-                        }else{
-                            if(keyData.__fnct){
-                                fnc = keyData.__fnct;
-                            }else{
-                                //fnc = bez.getEasingCurve(outX,outY,inX,inY);
-                                fnc = BezierFactory.getBezierEasing(outX,outY,inX,inY).get;
-                                keyData.__fnct = fnc;
-                            }
-                        }
                         if(frameNum >= nextKeyData.t-this.offsetTime){
                             perc = 1;
                         }else if(frameNum < keyData.t-this.offsetTime){
                             perc = 0;
                         }else{
+                            if(keyData.o.x instanceof Array){
+                                if(!keyData.__fnct){
+                                    keyData.__fnct = [];
+                                }
+                                if (!keyData.__fnct[i]) {
+                                    outX = keyData.o.x[i] || keyData.o.x[0];
+                                    outY = keyData.o.y[i] || keyData.o.y[0];
+                                    inX = keyData.i.x[i] || keyData.i.x[0];
+                                    inY = keyData.i.y[i] || keyData.i.y[0];
+                                    fnc = BezierFactory.getBezierEasing(outX,outY,inX,inY).get;
+                                    keyData.__fnct[i] = fnc;
+                                } else {
+                                    fnc = keyData.__fnct[i];
+                                }
+                            } else {
+                                if (!keyData.__fnct) {
+                                    outX = keyData.o.x;
+                                    outY = keyData.o.y;
+                                    inX = keyData.i.x;
+                                    inY = keyData.i.y;
+                                    fnc = BezierFactory.getBezierEasing(outX,outY,inX,inY).get;
+                                    keyData.__fnct = fnc;
+                                } else{
+                                    fnc = keyData.__fnct;
+                                }
+                            }
                             perc = fnc((frameNum-(keyData.t-this.offsetTime))/((nextKeyData.t-this.offsetTime)-(keyData.t-this.offsetTime)));
                         }
                     }
@@ -2443,9 +2519,9 @@ var PropertyFactory = (function(){
         this.k = false;
         this.kf = false;
         this.frameId = -1;
-        this.v = new Array(data.k.length);
-        this.pv = new Array(data.k.length);
-        this.lastValue = new Array(data.k.length);
+        this.v = Array.apply(null, {length:data.k.length});
+        this.pv = Array.apply(null, {length:data.k.length});
+        this.lastValue = Array.apply(null, {length:data.k.length});
         var arr = Array.apply(null, {length:data.k.length});
         this.vel = arr.map(function () { return 0 });
         var i, len = data.k.length;
@@ -2462,6 +2538,7 @@ var PropertyFactory = (function(){
         this.lastValue = -99999;
         this.lastPValue = -99999;
         this.frameId = -1;
+        this._lastIndex = 0;
         this.k = true;
         this.kf = true;
         this.data = data;
@@ -2498,167 +2575,127 @@ var PropertyFactory = (function(){
         this.comp = elem.comp;
         this.getValue = getValue;
         this.frameId = -1;
-        this.v = new Array(data.k[0].s.length);
-        this.pv = new Array(data.k[0].s.length);
-        this.lastValue = new Array(data.k[0].s.length);
-        this.lastPValue = new Array(data.k[0].s.length);
+        this._lastIndex = 0;
+        this.v = Array.apply(null, {length:data.k[0].s.length});
+        this.pv = Array.apply(null, {length:data.k[0].s.length});
+        this.lastValue = Array.apply(null, {length:data.k[0].s.length});
+        this.lastPValue = Array.apply(null, {length:data.k[0].s.length});
         this.lastFrame = initFrame;
     }
 
-    var TransformProperty = (function(){
-        function positionGetter(){
-            if(this.p.k){
-                this.p.getValue();
+    var TransformProperty = (function() {
+        function positionGetter() {
+            if(this.p) {
+                return ExpressionValue(this.p);
+            } else {
+                return [this.px.v, this.py.v, this.pz ? this.pz.v : 0];
             }
-            if(!this.p.v.key){
-                this.p.v.key = function(pos){
-                    if(!this.p.v.numKeys){
-                        return 0;
-                    } else {
-                        return this.p.keyframes[pos-1].t;
-                    }
-                }.bind(this);
-            }
-            if(!this.p.v.numKeys){
-                this.p.v.numKeys = this.p.keyframes ? this.p.keyframes.length : 0;
-            }
-            if(!this.p.v.valueAtTime){
-                this.p.v.valueAtTime = this.p.getValueAtTime.bind(this.p);
-            }
-            return this.p.v;
         }
-        function xPositionGetter(){
-            if(this.px.k){
-                this.px.getValue();
-            }
-            return this.px.v;
+        function xPositionGetter() {
+            return ExpressionValue(this.px);
         }
-        function yPositionGetter(){
-            if(this.py.k){
-                this.py.getValue();
-            }
-            return this.py.v;
+        function yPositionGetter() {
+            return ExpressionValue(this.py);
         }
-        function zPositionGetter(){
-            if(this.pz.k){
-                this.pz.getValue();
-            }
-            return this.pz.v;
+        function zPositionGetter() {
+            return ExpressionValue(this.pz);
         }
-        function anchorGetter(){
-            if(this.a.k){
-                this.a.getValue();
-            }
-            return this.a.v;
+        function anchorGetter() {
+            return ExpressionValue(this.a);
         }
-        function orientationGetter(){
-            if(this.or.k){
-                this.or.getValue();
-            }
-            return this.or.v;
+        function orientationGetter() {
+            return ExpressionValue(this.or);
         }
-        function rotationGetter(){
-            if(this.r.k){
-                this.r.getValue();
+        function rotationGetter() {
+            if(this.r) {
+                return ExpressionValue(this.r, 1/degToRads);
+            } else {
+                return ExpressionValue(this.rz, 1/degToRads);
             }
-            return this.r.v/degToRads;
         }
-        function scaleGetter(){
-            if(this.s.k){
-                this.s.getValue();
-            }
-            return this.s.v;
+        function scaleGetter() {
+            return ExpressionValue(this.s, 100);
         }
-        function opacityGetter(){
-            if(this.o.k){
-                this.o.getValue();
-            }
-            return this.o.v;
+        function opacityGetter() {
+            return ExpressionValue(this.o, 100);
         }
-        function skewGetter(){
-            if(this.sk.k){
-                this.sk.getValue();
-            }
-            return this.sk.v;
+        function skewGetter() {
+            return ExpressionValue(this.sk);
         }
-        function skewAxisGetter(){
-            if(this.sa.k){
-                this.sa.getValue();
-            }
-            return this.sa.v;
+        function skewAxisGetter() {
+            return ExpressionValue(this.sa);
         }
-        function applyToMatrix(mat){
+        function applyToMatrix(mat) {
             var i, len = this.dynamicProperties.length;
-            for(i=0;i<len;i+=1){
+            for(i = 0; i < len; i += 1) {
                 this.dynamicProperties[i].getValue();
-                if(this.dynamicProperties[i].mdf){
+                if (this.dynamicProperties[i].mdf) {
                     this.mdf = true;
                 }
             }
-            if(this.a){
-                mat.translate(-this.a.v[0],-this.a.v[1],this.a.v[2]);
+            if (this.a) {
+                mat.translate(-this.a.v[0], -this.a.v[1], this.a.v[2]);
             }
-            if(this.s){
-                mat.scale(this.s.v[0],this.s.v[1],this.s.v[2]);
+            if (this.s) {
+                mat.scale(this.s.v[0], this.s.v[1], this.s.v[2]);
             }
-            if(this.r){
+            if (this.r) {
                 mat.rotate(-this.r.v);
-            }else{
+            } else {
                 mat.rotateZ(-this.rz.v).rotateY(this.ry.v).rotateX(this.rx.v).rotateZ(-this.or.v[2]).rotateY(this.or.v[1]).rotateX(this.or.v[0]);
             }
-            if(this.data.p.s){
-                if(this.data.p.z) {
+            if (this.data.p.s) {
+                if (this.data.p.z) {
                     mat.translate(this.px.v, this.py.v, -this.pz.v);
                 } else {
                     mat.translate(this.px.v, this.py.v, 0);
                 }
-            }else{
-                mat.translate(this.p.v[0],this.p.v[1],-this.p.v[2]);
+            } else {
+                mat.translate(this.p.v[0], this.p.v[1], -this.p.v[2]);
             }
         }
         function processKeys(){
-            if(this.elem.globalData.frameId === this.frameId){
+            if (this.elem.globalData.frameId === this.frameId) {
                 return;
             }
 
             this.mdf = false;
             var i, len = this.dynamicProperties.length;
 
-            for(i=0;i<len;i+=1){
+            for(i = 0; i < len; i += 1) {
                 this.dynamicProperties[i].getValue();
-                if(this.dynamicProperties[i].mdf){
+                if (this.dynamicProperties[i].mdf) {
                     this.mdf = true;
                 }
             }
-            if(this.mdf){
+            if (this.mdf) {
                 this.v.reset();
-                if(this.a){
-                    this.v.translate(-this.a.v[0],-this.a.v[1],this.a.v[2]);
+                if (this.a) {
+                    this.v.translate(-this.a.v[0], -this.a.v[1], this.a.v[2]);
                 }
-                if(this.s){
-                    this.v.scale(this.s.v[0],this.s.v[1],this.s.v[2]);
+                if(this.s) {
+                    this.v.scale(this.s.v[0], this.s.v[1], this.s.v[2]);
                 }
-                if(this.sk){
-                    this.v.skewFromAxis(-this.sk.v,this.sa.v);
+                if (this.sk) {
+                    this.v.skewFromAxis(-this.sk.v, this.sa.v);
                 }
-                if(this.r){
+                if (this.r) {
                     this.v.rotate(-this.r.v);
-                }else{
+                } else {
                     this.v.rotateZ(-this.rz.v).rotateY(this.ry.v).rotateX(this.rx.v).rotateZ(-this.or.v[2]).rotateY(this.or.v[1]).rotateX(this.or.v[0]);
                 }
-                if(this.autoOriented && this.p.keyframes && this.p.getValueAtTime){
+                if (this.autoOriented && this.p.keyframes && this.p.getValueAtTime) {
                     var v1,v2;
-                    if(this.p.lastFrame+this.p.offsetTime < this.p.keyframes[0].t){
-                        v1 = this.p.getValueAtTime(this.p.keyframes[0].t+0.01,0);
-                        v2 = this.p.getValueAtTime(this.p.keyframes[0].t, 0);
-                    }else if(this.p.lastFrame+this.p.offsetTime > this.p.keyframes[this.p.keyframes.length - 1].t){
-                        v1 = this.p.getValueAtTime(this.p.keyframes[this.p.keyframes.length - 1].t,0);
-                        v2 = this.p.getValueAtTime(this.p.keyframes[this.p.keyframes.length - 1].t-0.01, 0);
+                    if (this.p.lastFrame+this.p.offsetTime <= this.p.keyframes[0].t) {
+                        v1 = this.p.getValueAtTime((this.p.keyframes[0].t + 0.01) / this.elem.globalData.frameRate,0);
+                        v2 = this.p.getValueAtTime(this.p.keyframes[0].t / this.elem.globalData.frameRate, 0);
+                    } else if(this.p.lastFrame+this.p.offsetTime >= this.p.keyframes[this.p.keyframes.length - 1].t) {
+                        v1 = this.p.getValueAtTime((this.p.keyframes[this.p.keyframes.length - 1].t / this.elem.globalData.frameRate), 0);
+                        v2 = this.p.getValueAtTime((this.p.keyframes[this.p.keyframes.length - 1].t - 0.01) / this.elem.globalData.frameRate, 0);
                     } else {
                         v1 = this.p.pv;
-                        v2 = this.p.getValueAtTime(this.p.lastFrame+this.p.offsetTime - 0.01, this.p.offsetTime);
+                        v2 = this.p.getValueAtTime((this.p.lastFrame+this.p.offsetTime - 0.01) / this.elem.globalData.frameRate, this.p.offsetTime);
                     }
-                    //var prevV = this.p.getValueAtTime(this.p.lastFrame - 0.01, true);
                     this.v.rotate(-Math.atan2(v1[1] - v2[1], v1[0] - v2[0]));
                 }
                 if(this.data.p.s){
@@ -2671,6 +2708,7 @@ var PropertyFactory = (function(){
                     this.v.translate(this.p.v[0],this.p.v[1],-this.p.v[2]);
                 }
             }
+            //console.log(this.v.to2dCSS())
             this.frameId = this.elem.globalData.frameId;
         }
 
@@ -2705,6 +2743,7 @@ var PropertyFactory = (function(){
         return function TransformProperty(elem,data,arr){
             this.elem = elem;
             this.frameId = -1;
+            this.type = 'transform';
             this.dynamicProperties = [];
             this.mdf = false;
             this.data = data;
@@ -2728,7 +2767,7 @@ var PropertyFactory = (function(){
                 this.rx = PropertyFactory.getProp(elem, data.rx, 0, degToRads, this.dynamicProperties);
                 this.ry = PropertyFactory.getProp(elem, data.ry, 0, degToRads, this.dynamicProperties);
                 this.rz = PropertyFactory.getProp(elem, data.rz, 0, degToRads, this.dynamicProperties);
-                this.or = PropertyFactory.getProp(elem, data.or, 0, degToRads, this.dynamicProperties);
+                this.or = PropertyFactory.getProp(elem, data.or, 1, degToRads, this.dynamicProperties);
             }
             if(data.sk){
                 this.sk = PropertyFactory.getProp(elem, data.sk, 0, degToRads, this.dynamicProperties);
@@ -2950,7 +2989,8 @@ var PropertyFactory = (function(){
         var max = Math.max;
         var min = Math.min;
         var floor = Math.floor;
-        function updateRange(){
+        function updateRange(newCharsFlag){
+            this.mdf = newCharsFlag || false;
             if(this.dynamicProperties.length){
                 var i, len = this.dynamicProperties.length;
                 for(i=0;i<len;i+=1){
@@ -2960,8 +3000,11 @@ var PropertyFactory = (function(){
                     }
                 }
             }
-            var totalChars = this.data.totalChars;
-            var divisor = this.data.r === 2 ? 1 : 100/totalChars;
+            var totalChars = this.elem.currentTextDocumentData.l.length;
+            if(newCharsFlag && this.data.r === 2) {
+                this.e.v = totalChars;
+            }
+            var divisor = this.data.r === 2 ? 1 : 100 / totalChars;
             var o = this.o.v/divisor;
             var s = this.s.v/divisor + o;
             var e = (this.e.v/divisor) + o;
@@ -3053,6 +3096,7 @@ var PropertyFactory = (function(){
             this.dynamicProperties = [];
             this.getValue = updateRange;
             this.getMult = getMult;
+            this.elem = elem;
             this.comp = elem.comp;
             this.finalS = 0;
             this.finalE = 0;
@@ -3060,7 +3104,7 @@ var PropertyFactory = (function(){
             if('e' in data){
                 this.e = PropertyFactory.getProp(elem,data.e,0,0,this.dynamicProperties);
             }else{
-                this.e = {v:data.r === 2 ? data.totalChars : 100};
+                this.e = {v:100};
             }
             this.o = PropertyFactory.getProp(elem,data.o || {k:0},0,0,this.dynamicProperties);
             this.xe = PropertyFactory.getProp(elem,data.xe || {k:0},0,0,this.dynamicProperties);
@@ -3085,6 +3129,66 @@ var PropertyFactory = (function(){
     ob.getGradientProp = getGradientProp;
     return ob;
 }());
+function ShapePath(){
+	this.c = false;
+	this._length = 0;
+	this._maxLength = 8;
+	this.v = Array.apply(null,{length:this._maxLength});
+	this.o = Array.apply(null,{length:this._maxLength});
+	this.i = Array.apply(null,{length:this._maxLength});
+};
+
+ShapePath.prototype.setPathData = function(closed, len) {
+	this.c = closed;
+	while(len > this._maxLength){
+		this.doubleArrayLength();
+	}
+	var i = 0;
+	while(i < len){
+		this.v[i] = point_pool.newPoint();
+		this.o[i] = point_pool.newPoint();
+		this.i[i] = point_pool.newPoint();
+		i += 1;
+	}
+	this._length = len;
+};
+
+ShapePath.prototype.doubleArrayLength = function() {
+	this.v = this.v.concat(Array.apply(null,{length:this._maxLength}))
+	this.i = this.i.concat(Array.apply(null,{length:this._maxLength}))
+	this.o = this.o.concat(Array.apply(null,{length:this._maxLength}))
+	this._maxLength *= 2;
+};
+
+ShapePath.prototype.setXYAt = function(x, y, type, pos, replace) {
+	var arr;
+	this._length = Math.max(this._length, pos + 1);
+	if(this._length >= this._maxLength) {
+		this.doubleArrayLength();
+	}
+	switch(type){
+		case 'v':
+			arr = this.v;
+			break;
+		case 'i':
+			arr = this.i;
+			break;
+		case 'o':
+			arr = this.o;
+			break;
+	}
+	if(!arr[pos] || (arr[pos] && !replace)){
+		arr[pos] = point_pool.newPoint();
+	}
+	arr[pos][0] = x;
+	arr[pos][1] = y;
+};
+
+ShapePath.prototype.setTripleAt = function(vX,vY,oX,oY,iX,iY,pos, replace) {
+	this.setXYAt(vX,vY,'v',pos, replace);
+	this.setXYAt(oX,oY,'o',pos, replace);
+	this.setXYAt(iX,iY,'i',pos, replace);
+};
 var ShapePropertyFactory = (function(){
 
     var initFrame = -999999;
@@ -3095,22 +3199,22 @@ var ShapePropertyFactory = (function(){
         }
         this.mdf = false;
         var frameNum = this.comp.renderedFrame - this.offsetTime;
-        if(this.lastFrame !== initFrame && ((this.lastFrame < this.keyframes[0].t-this.offsetTime && frameNum < this.keyframes[0].t-this.offsetTime) || (this.lastFrame > this.keyframes[this.keyframes.length - 1].t-this.offsetTime && frameNum > this.keyframes[this.keyframes.length - 1].t-this.offsetTime))){
-        }else{
+        if(!((this.lastFrame !== initFrame && ((this.lastFrame < this.keyframes[0].t-this.offsetTime && frameNum < this.keyframes[0].t-this.offsetTime) || (this.lastFrame > this.keyframes[this.keyframes.length - 1].t-this.offsetTime && frameNum > this.keyframes[this.keyframes.length - 1].t-this.offsetTime))))){
             var keyPropS,keyPropE,isHold;
             if(frameNum < this.keyframes[0].t-this.offsetTime){
                 keyPropS = this.keyframes[0].s[0];
                 isHold = true;
+                this._lastIndex = 0;
             }else if(frameNum >= this.keyframes[this.keyframes.length - 1].t-this.offsetTime){
                 if(this.keyframes[this.keyframes.length - 2].h === 1){
-                    //keyPropS = this.keyframes[this.keyframes.length - 1].s ? this.keyframes[this.keyframes.length - 1].s[0] : this.keyframes[this.keyframes.length - 2].s[0];
                     keyPropS = this.keyframes[this.keyframes.length - 1].s[0];
                 }else{
                     keyPropS = this.keyframes[this.keyframes.length - 2].e[0];
                 }
                 isHold = true;
             }else{
-                var i = 0,len = this.keyframes.length- 1,flag = true,keyData,nextKeyData, j, jLen, k, kLen;
+                var i = this.lastFrame < initFrame ? this._lastIndex : 0;
+                var len = this.keyframes.length- 1,flag = true,keyData,nextKeyData, j, jLen, k, kLen;
                 while(flag){
                     keyData = this.keyframes[i];
                     nextKeyData = this.keyframes[i+1];
@@ -3124,32 +3228,29 @@ var ShapePropertyFactory = (function(){
                     }
                 }
                 isHold = keyData.h === 1;
-                if(isHold && i === len){
-                    keyData = nextKeyData;
-                }
+                this._lastIndex = i;
 
                 var perc;
                 if(!isHold){
-                    var fnc;
-                    if(keyData.__fnct){
-                        fnc = keyData.__fnct;
-                    }else{
-                        //fnc = bez.getEasingCurve(keyData.o.x,keyData.o.y,keyData.i.x,keyData.i.y);
-                        fnc = BezierFactory.getBezierEasing(keyData.o.x,keyData.o.y,keyData.i.x,keyData.i.y).get;
-                        keyData.__fnct = fnc;
-                    }
                     if(frameNum >= nextKeyData.t-this.offsetTime){
                         perc = 1;
                     }else if(frameNum < keyData.t-this.offsetTime){
                         perc = 0;
                     }else{
+                        var fnc;
+                        if(keyData.__fnct){
+                            fnc = keyData.__fnct;
+                        }else{
+                            fnc = BezierFactory.getBezierEasing(keyData.o.x,keyData.o.y,keyData.i.x,keyData.i.y).get;
+                            keyData.__fnct = fnc;
+                        }
                         perc = fnc((frameNum-(keyData.t-this.offsetTime))/((nextKeyData.t-this.offsetTime)-(keyData.t-this.offsetTime)));
                     }
                     keyPropE = keyData.e[0];
                 }
                 keyPropS = keyData.s[0];
             }
-            jLen = this.v.i.length;
+            jLen = this.v._length;
             kLen = keyPropS.i[0].length;
             var hasModified = false;
             var vertexValue;
@@ -3197,9 +3298,8 @@ var ShapePropertyFactory = (function(){
                 }
             }
             this.mdf = hasModified;
-            this.paths.length = 0;
             this.v.c = keyPropS.c;
-            this.paths[0] = this.v;
+            this.paths = this.localShapeCollection;
         }
 
         this.lastFrame = frameNum;
@@ -3211,59 +3311,48 @@ var ShapePropertyFactory = (function(){
     }
 
     function resetShape(){
-        this.resetPaths.length = 1;
-        this.resetPaths[0] = this.v;
-        this.paths = this.resetPaths;
+        this.paths = this.localShapeCollection;
         if(!this.k){
             this.mdf = false;
         }
     }
 
     function ShapeProperty(elem, data, type){
-        this.resetPaths = [];
         this.comp = elem.comp;
         this.k = false;
         this.mdf = false;
-        this.numNodes = type === 3 ? data.pt.k.v.length : data.ks.k.v.length;
-        this.v = type === 3 ? data.pt.k : data.ks.k;
+        this.v = shape_pool.newShape();
+        var pathData = type === 3 ? data.pt.k : data.ks.k;
+        this.v.v = pathData.v;
+        this.v.i = pathData.i;
+        this.v.o = pathData.o;
+        this.v.c = pathData.c;
+        this.v._length = this.v.v.length;
         this.getValue = getShapeValue;
-        this.pv = this.v;
-        this.paths = [this.v];
+        this.pv = shape_pool.clone(this.v);
+        this.localShapeCollection = shapeCollection_pool.newShapeCollection();
+        this.paths = this.localShapeCollection;
+        this.paths.addShape(this.v);
         this.reset = resetShape;
     }
 
     function KeyframedShapeProperty(elem,data,type){
-        this.resetPaths = [];
         this.comp = elem.comp;
         this.elem = elem;
         this.offsetTime = elem.data.st;
+        this._lastIndex = 0;
         this.getValue = interpolateShape;
         this.keyframes = type === 3 ? data.pt.k : data.ks.k;
         this.k = true;
+        this.kf = true;
         var i, len = this.keyframes[0].s[0].i.length;
         var jLen = this.keyframes[0].s[0].i[0].length;
-        this.numNodes = len;
-        this.v = {
-            i: Array.apply(null,{length:len}),
-            o: Array.apply(null,{length:len}),
-            v: Array.apply(null,{length:len}),
-            c: this.keyframes[0].s[0].c
-        };
-        this.pv = {
-            i: Array.apply(null,{length:len}),
-            o: Array.apply(null,{length:len}),
-            v: Array.apply(null,{length:len}),
-            c: this.keyframes[0].s[0].c
-        };
-        for(i=0;i<len;i+=1){
-            this.v.i[i] = Array.apply(null,{length:jLen});
-            this.v.o[i] = Array.apply(null,{length:jLen});
-            this.v.v[i] = Array.apply(null,{length:jLen});
-            this.pv.i[i] = Array.apply(null,{length:jLen});
-            this.pv.o[i] = Array.apply(null,{length:jLen});
-            this.pv.v[i] = Array.apply(null,{length:jLen});
-        }
-        this.paths = [];
+        this.v = shape_pool.newShape();
+        this.v.setPathData(this.keyframes[0].s[0].c, len);
+        this.pv = shape_pool.clone(this.v);
+        this.localShapeCollection = shapeCollection_pool.newShapeCollection();
+        this.paths = this.localShapeCollection;
+        this.paths.addShape(this.v);
         this.lastFrame = initFrame;
         this.reset = resetShape;
     }
@@ -3274,35 +3363,57 @@ var ShapePropertyFactory = (function(){
 
         function convertEllToPath(){
             var p0 = this.p.v[0], p1 = this.p.v[1], s0 = this.s.v[0]/2, s1 = this.s.v[1]/2;
-            if(this.d !== 2 && this.d !== 3){
-                this.v.v[0] = [p0,p1-s1];
-                this.v.i[0] = [p0 - s0*cPoint,p1 - s1];
-                this.v.o[0] = [p0 + s0*cPoint,p1 - s1];
-                this.v.v[1] = [p0 + s0,p1];
-                this.v.i[1] = [p0 + s0,p1 - s1*cPoint];
-                this.v.o[1] = [p0 + s0,p1 + s1*cPoint];
-                this.v.v[2] = [p0,p1+s1];
-                this.v.i[2] = [p0 + s0*cPoint,p1 + s1];
-                this.v.o[2] = [p0 - s0*cPoint,p1 + s1];
-                this.v.v[3] = [p0 - s0,p1];
-                this.v.i[3] = [p0 - s0,p1 + s1*cPoint];
-                this.v.o[3] = [p0 - s0,p1 - s1*cPoint];
+            if(this.d !== 3){
+                this.v.v[0][0] = p0;
+                this.v.v[0][1] = p1-s1;
+                this.v.v[1][0] = p0 + s0;
+                this.v.v[1][1] = p1;
+                this.v.v[2][0] = p0;
+                this.v.v[2][1] = p1+s1;
+                this.v.v[3][0] = p0 - s0;
+                this.v.v[3][1] = p1;
+                this.v.i[0][0] = p0 - s0*cPoint;
+                this.v.i[0][1] = p1 - s1;
+                this.v.i[1][0] = p0 + s0;
+                this.v.i[1][1] = p1 - s1*cPoint;
+                this.v.i[2][0] = p0 + s0*cPoint;
+                this.v.i[2][1] = p1 + s1;
+                this.v.i[3][0] = p0 - s0;
+                this.v.i[3][1] = p1 + s1*cPoint;
+                this.v.o[0][0] = p0 + s0*cPoint;
+                this.v.o[0][1] = p1 - s1;
+                this.v.o[1][0] = p0 + s0;
+                this.v.o[1][1] = p1 + s1*cPoint;
+                this.v.o[2][0] = p0 - s0*cPoint;
+                this.v.o[2][1] = p1 + s1;
+                this.v.o[3][0] = p0 - s0;
+                this.v.o[3][1] = p1 - s1*cPoint;
             }else{
-                this.v.v[0] = [p0,p1-s1];
-                this.v.o[0] = [p0 - s0*cPoint,p1 - s1];
-                this.v.i[0] = [p0 + s0*cPoint,p1 - s1];
-                this.v.v[1] = [p0 - s0,p1];
-                this.v.o[1] = [p0 - s0,p1 + s1*cPoint];
-                this.v.i[1] = [p0 - s0,p1 - s1*cPoint];
-                this.v.v[2] = [p0,p1+s1];
-                this.v.o[2] = [p0 + s0*cPoint,p1 + s1];
-                this.v.i[2] = [p0 - s0*cPoint,p1 + s1];
-                this.v.v[3] = [p0 + s0,p1];
-                this.v.o[3] = [p0 + s0,p1 - s1*cPoint];
-                this.v.i[3] = [p0 + s0,p1 + s1*cPoint];
+                this.v.v[0][0] = p0;
+                this.v.v[0][1] = p1-s1;
+                this.v.v[1][0] = p0 - s0;
+                this.v.v[1][1] = p1;
+                this.v.v[2][0] = p0;
+                this.v.v[2][1] = p1+s1;
+                this.v.v[3][0] = p0 + s0;
+                this.v.v[3][1] = p1;
+                this.v.i[0][0] = p0 + s0*cPoint;
+                this.v.i[0][1] = p1 - s1;
+                this.v.i[1][0] = p0 - s0;
+                this.v.i[1][1] = p1 - s1*cPoint;
+                this.v.i[2][0] = p0 - s0*cPoint;
+                this.v.i[2][1] = p1 + s1;
+                this.v.i[3][0] = p0 + s0;
+                this.v.i[3][1] = p1 + s1*cPoint;
+                this.v.o[0][0] = p0 - s0*cPoint;
+                this.v.o[0][1] = p1 - s1;
+                this.v.o[1][0] = p0 - s0;
+                this.v.o[1][1] = p1 + s1*cPoint;
+                this.v.o[2][0] = p0 + s0*cPoint;
+                this.v.o[2][1] = p1 + s1;
+                this.v.o[3][0] = p0 + s0;
+                this.v.o[3][1] = p1 - s1*cPoint;
             }
-            this.paths.length = 0;
-            this.paths[0] = this.v;
         }
 
         function processKeys(frameNum){
@@ -3321,23 +3432,23 @@ var ShapePropertyFactory = (function(){
             }
             if(this.mdf){
                 this.convertEllToPath();
-                this.paths.length = 0;
-                this.paths[0] = this.v;
             }
         }
 
         return function EllShapeProperty(elem,data) {
-            this.v = {
+            /*this.v = {
                 v: Array.apply(null,{length:4}),
                 i: Array.apply(null,{length:4}),
                 o: Array.apply(null,{length:4}),
                 c: true
-            };
-            this.numNodes = 4;
+            };*/
+            this.v = shape_pool.newShape();
+            this.v.setPathData(true, 4);
+            this.localShapeCollection = shapeCollection_pool.newShapeCollection();
+            this.paths = this.localShapeCollection;
+            this.localShapeCollection.addShape(this.v);
             this.d = data.d;
             this.dynamicProperties = [];
-            this.resetPaths = [];
-            this.paths = [];
             this.elem = elem;
             this.comp = elem.comp;
             this.frameId = -1;
@@ -3360,15 +3471,16 @@ var ShapePropertyFactory = (function(){
         function convertPolygonToPath(){
             var numPts = Math.floor(this.pt.v);
             var angle = Math.PI*2/numPts;
-            this.v.v.length = numPts;
+            /*this.v.v.length = numPts;
             this.v.i.length = numPts;
-            this.v.o.length = numPts;
+            this.v.o.length = numPts;*/
             var rad = this.or.v;
             var roundness = this.os.v;
             var perimSegment = 2*Math.PI*rad/(numPts*4);
             var i, currentAng = -Math.PI/ 2;
             var dir = this.data.d === 3 ? -1 : 1;
             currentAng += this.r.v;
+            this.v._length = 0;
             for(i=0;i<numPts;i+=1){
                 var x = rad * Math.cos(currentAng);
                 var y = rad * Math.sin(currentAng);
@@ -3376,12 +3488,12 @@ var ShapePropertyFactory = (function(){
                 var oy = x === 0 && y === 0 ? 0 : -x/Math.sqrt(x*x + y*y);
                 x +=  + this.p.v[0];
                 y +=  + this.p.v[1];
-                this.v.v[i] = [x,y];
+                this.v.setTripleAt(x,y,x-ox*perimSegment*roundness*dir,y-oy*perimSegment*roundness*dir,x+ox*perimSegment*roundness*dir,y+oy*perimSegment*roundness*dir, i, true);
+                /*this.v.v[i] = [x,y];
                 this.v.i[i] = [x+ox*perimSegment*roundness*dir,y+oy*perimSegment*roundness*dir];
-                this.v.o[i] = [x-ox*perimSegment*roundness*dir,y-oy*perimSegment*roundness*dir];
+                this.v.o[i] = [x-ox*perimSegment*roundness*dir,y-oy*perimSegment*roundness*dir];*/
                 currentAng += angle*dir;
             }
-            this.numNodes = numPts;
             this.paths.length = 0;
             this.paths[0] = this.v;
         }
@@ -3389,9 +3501,9 @@ var ShapePropertyFactory = (function(){
         function convertStarToPath() {
             var numPts = Math.floor(this.pt.v)*2;
             var angle = Math.PI*2/numPts;
-            this.v.v.length = numPts;
+            /*this.v.v.length = numPts;
             this.v.i.length = numPts;
-            this.v.o.length = numPts;
+            this.v.o.length = numPts;*/
             var longFlag = true;
             var longRad = this.or.v;
             var shortRad = this.ir.v;
@@ -3402,6 +3514,7 @@ var ShapePropertyFactory = (function(){
             var i, rad,roundness,perimSegment, currentAng = -Math.PI/ 2;
             currentAng += this.r.v;
             var dir = this.data.d === 3 ? -1 : 1;
+            this.v._length = 0;
             for(i=0;i<numPts;i+=1){
                 rad = longFlag ? longRad : shortRad;
                 roundness = longFlag ? longRound : shortRound;
@@ -3412,15 +3525,15 @@ var ShapePropertyFactory = (function(){
                 var oy = x === 0 && y === 0 ? 0 : -x/Math.sqrt(x*x + y*y);
                 x +=  + this.p.v[0];
                 y +=  + this.p.v[1];
-                this.v.v[i] = [x,y];
+                this.v.setTripleAt(x,y,x-ox*perimSegment*roundness*dir,y-oy*perimSegment*roundness*dir,x+ox*perimSegment*roundness*dir,y+oy*perimSegment*roundness*dir, i, true);
+
+                /*this.v.v[i] = [x,y];
                 this.v.i[i] = [x+ox*perimSegment*roundness*dir,y+oy*perimSegment*roundness*dir];
                 this.v.o[i] = [x-ox*perimSegment*roundness*dir,y-oy*perimSegment*roundness*dir];
+                this.v._length = numPts;*/
                 longFlag = !longFlag;
                 currentAng += angle*dir;
             }
-            this.numNodes = numPts;
-            this.paths.length = 0;
-            this.paths[0] = this.v;
         }
 
         function processKeys() {
@@ -3443,13 +3556,14 @@ var ShapePropertyFactory = (function(){
         }
 
         return function StarShapeProperty(elem,data) {
-            this.v = {
+            /*this.v = {
                 v: [],
                 i: [],
                 o: [],
                 c: true
-            };
-            this.resetPaths = [];
+            };*/
+            this.v = shape_pool.newShape();
+            this.v.setPathData(true, 0);
             this.elem = elem;
             this.comp = elem.comp;
             this.data = data;
@@ -3471,7 +3585,9 @@ var ShapePropertyFactory = (function(){
             this.r = PropertyFactory.getProp(elem,data.r,0,degToRads,this.dynamicProperties);
             this.or = PropertyFactory.getProp(elem,data.or,0,0,this.dynamicProperties);
             this.os = PropertyFactory.getProp(elem,data.os,0,0.01,this.dynamicProperties);
-            this.paths = [];
+            this.localShapeCollection = shapeCollection_pool.newShapeCollection();
+            this.localShapeCollection.addShape(this.v);
+            this.paths = this.localShapeCollection;
             if(this.dynamicProperties.length){
                 this.k = true;
             }else{
@@ -3505,113 +3621,47 @@ var ShapePropertyFactory = (function(){
             var p0 = this.p.v[0], p1 = this.p.v[1], v0 = this.s.v[0]/2, v1 = this.s.v[1]/2;
             var round = bm_min(v0,v1,this.r.v);
             var cPoint = round*(1-roundCorner);
-            if(round === 0){
-                this.v.v.length = 4;
-                this.v.i.length = 4;
-                this.v.o.length = 4;
-            } else {
-                this.v.v.length = 8;
-                this.v.i.length = 8;
-                this.v.o.length = 8;
-            }
+            this.v._length = 0;
 
             if(this.d === 2 || this.d === 1) {
-
-                this.v.v[0] = [p0+v0,p1-v1+round];
-                this.v.o[0] = this.v.v[0];
-                this.v.i[0] = [p0+v0,p1-v1+cPoint];
-
-                this.v.v[1] = [p0+v0,p1+v1-round];
-                this.v.o[1] = [p0+v0,p1+v1-cPoint];
-                this.v.i[1] = this.v.v[1];
-
+                this.v.setTripleAt(p0+v0, p1-v1+round,p0+v0, p1-v1+round,p0+v0,p1-v1+cPoint,0, true);
+                this.v.setTripleAt(p0+v0, p1+v1-round,p0+v0, p1+v1-cPoint,p0+v0, p1+v1-round,1, true);
                 if(round!== 0){
-                    this.v.v[2] = [p0+v0-round,p1+v1];
-                    this.v.o[2] = this.v.v[2];
-                    this.v.i[2] = [p0+v0-cPoint,p1+v1];
-                    this.v.v[3] = [p0-v0+round,p1+v1];
-                    this.v.o[3] = [p0-v0+cPoint,p1+v1];
-                    this.v.i[3] = this.v.v[3];
-                    this.v.v[4] = [p0-v0,p1+v1-round];
-                    this.v.o[4] = this.v.v[4];
-                    this.v.i[4] = [p0-v0,p1+v1-cPoint];
-                    this.v.v[5] = [p0-v0,p1-v1+round];
-                    this.v.o[5] = [p0-v0,p1-v1+cPoint];
-                    this.v.i[5] = this.v.v[5];
-                    this.v.v[6] = [p0-v0+round,p1-v1];
-                    this.v.o[6] = this.v.v[6];
-                    this.v.i[6] = [p0-v0+cPoint,p1-v1];
-                    this.v.v[7] = [p0+v0-round,p1-v1];
-                    this.v.o[7] = [p0+v0-cPoint,p1-v1];
-                    this.v.i[7] = this.v.v[7];
+                    this.v.setTripleAt(p0+v0-round, p1+v1,p0+v0-round,p1+v1,p0+v0-cPoint,p1+v1,2, true);
+                    this.v.setTripleAt(p0-v0+round,p1+v1,p0-v0+cPoint,p1+v1,p0-v0+round,p1+v1,3, true);
+                    this.v.setTripleAt(p0-v0,p1+v1-round,p0-v0,p1+v1-round,p0-v0,p1+v1-cPoint,4, true);
+                    this.v.setTripleAt(p0-v0,p1-v1+round,p0-v0,p1-v1+cPoint,p0-v0,p1-v1+round,5, true);
+                    this.v.setTripleAt(p0-v0+round,p1-v1,p0-v0+round,p1-v1,p0-v0+cPoint,p1-v1,6, true);
+                    this.v.setTripleAt(p0+v0-round,p1-v1,p0+v0-cPoint,p1-v1,p0+v0-round,p1-v1,7, true);
                 } else {
-                    this.v.v[2] = [p0-v0+round,p1+v1];
-                    this.v.o[2] = [p0-v0+cPoint,p1+v1];
-                    this.v.i[2] = this.v.v[2];
-                    this.v.v[3] = [p0-v0,p1-v1+round];
-                    this.v.o[3] = [p0-v0,p1-v1+cPoint];
-                    this.v.i[3] = this.v.v[3];
+                    this.v.setTripleAt(p0-v0,p1+v1,p0-v0+cPoint,p1+v1,p0-v0,p1+v1,2);
+                    this.v.setTripleAt(p0-v0,p1-v1,p0-v0,p1-v1+cPoint,p0-v0,p1-v1,3);
                 }
             }else{
-                this.v.v[0] = [p0+v0,p1-v1+round];
-                this.v.o[0] = [p0+v0,p1-v1+cPoint];
-                this.v.i[0] = this.v.v[0];
-
+                this.v.setTripleAt(p0+v0,p1-v1+round,p0+v0,p1-v1+cPoint,p0+v0,p1-v1+round,0, true);
                 if(round!== 0){
-                    this.v.v[1] = [p0+v0-round,p1-v1];
-                    this.v.o[1] = this.v.v[1];
-                    this.v.i[1] = [p0+v0-cPoint,p1-v1];
-
-                    this.v.v[2] = [p0-v0+round,p1-v1];
-                    this.v.o[2] = [p0-v0+cPoint,p1-v1];
-                    this.v.i[2] = this.v.v[2];
-
-                    this.v.v[3] = [p0-v0,p1-v1+round];
-                    this.v.o[3] = this.v.v[3];
-                    this.v.i[3] = [p0-v0,p1-v1+cPoint];
-
-                    this.v.v[4] = [p0-v0,p1+v1-round];
-                    this.v.o[4] = [p0-v0,p1+v1-cPoint];
-                    this.v.i[4] = this.v.v[4];
-
-                    this.v.v[5] = [p0-v0+round,p1+v1];
-                    this.v.o[5] = this.v.v[5];
-                    this.v.i[5] = [p0-v0+cPoint,p1+v1];
-
-                    this.v.v[6] = [p0+v0-round,p1+v1];
-                    this.v.o[6] = [p0+v0-cPoint,p1+v1];
-                    this.v.i[6] = this.v.v[6];
-
-                    this.v.v[7] = [p0+v0,p1+v1-round];
-                    this.v.o[7] = this.v.v[7];
-                    this.v.i[7] = [p0+v0,p1+v1-cPoint];
+                    this.v.setTripleAt(p0+v0-round,p1-v1,p0+v0-round,p1-v1,p0+v0-cPoint,p1-v1,1, true);
+                    this.v.setTripleAt(p0-v0+round,p1-v1,p0-v0+cPoint,p1-v1,p0-v0+round,p1-v1,2, true);
+                    this.v.setTripleAt(p0-v0,p1-v1+round,p0-v0,p1-v1+round,p0-v0,p1-v1+cPoint,3, true);
+                    this.v.setTripleAt(p0-v0,p1+v1-round,p0-v0,p1+v1-cPoint,p0-v0,p1+v1-round,4, true);
+                    this.v.setTripleAt(p0-v0+round,p1+v1,p0-v0+round,p1+v1,p0-v0+cPoint,p1+v1,5, true);
+                    this.v.setTripleAt(p0+v0-round,p1+v1,p0+v0-cPoint,p1+v1,p0+v0-round,p1+v1,6, true);
+                    this.v.setTripleAt(p0+v0,p1+v1-round,p0+v0,p1+v1-round,p0+v0,p1+v1-cPoint,7, true);
                 } else {
-                    this.v.v[1] = [p0-v0+round,p1-v1];
-                    this.v.o[1] = [p0-v0+cPoint,p1-v1];
-                    this.v.i[1] = this.v.v[1];
-                    this.v.v[2] = [p0-v0,p1+v1-round];
-                    this.v.o[2] = [p0-v0,p1+v1-cPoint];
-                    this.v.i[2] = this.v.v[2];
-                    this.v.v[3] = [p0+v0-round,p1+v1];
-                    this.v.o[3] = [p0+v0-cPoint,p1+v1];
-                    this.v.i[3] = this.v.v[3];
+                    this.v.setTripleAt(p0-v0,p1-v1,p0-v0+cPoint,p1-v1,p0-v0,p1-v1,1, true);
+                    this.v.setTripleAt(p0-v0,p1+v1,p0-v0,p1+v1-cPoint,p0-v0,p1+v1,2, true);
+                    this.v.setTripleAt(p0+v0,p1+v1,p0+v0-cPoint,p1+v1,p0+v0,p1+v1,3, true);
 
                 }
             }
-            this.paths.length = 0;
-            this.paths[0] = this.v;
         }
 
         return function RectShapeProperty(elem,data) {
-            this.v = {
-                v: Array.apply(null,{length:8}),
-                i: Array.apply(null,{length:8}),
-                o: Array.apply(null,{length:8}),
-                c: true
-            };
-            this.resetPaths = [];
-            this.paths = [];
-            this.numNodes = 8;
+            this.v = shape_pool.newShape();
+            this.v.c = true;
+            this.localShapeCollection = shapeCollection_pool.newShapeCollection();
+            this.localShapeCollection.addShape(this.v);
+            this.paths = this.localShapeCollection;
             this.elem = elem;
             this.comp = elem.comp;
             this.frameId = -1;
@@ -3681,10 +3731,10 @@ var ShapeModifiers = (function(){
 function ShapeModifier(){}
 ShapeModifier.prototype.initModifierProperties = function(){};
 ShapeModifier.prototype.addShapeToModifier = function(){};
-ShapeModifier.prototype.addShape = function(shape){
+ShapeModifier.prototype.addShape = function(data){
     if(!this.closed){
-        this.shapes.push({shape:shape,last:[]});
-        this.addShapeToModifier(shape);
+        this.shapes.push({shape:data.sh, data: data, localShapeCollection:shapeCollection_pool.newShapeCollection()});
+        this.addShapeToModifier(data.sh);
     }
 }
 ShapeModifier.prototype.init = function(elem,data,dynamicProperties){
@@ -3695,7 +3745,6 @@ ShapeModifier.prototype.init = function(elem,data,dynamicProperties){
     this.mdf = false;
     this.closed = false;
     this.k = false;
-    this.isTrimming = false;
     this.comp = elem.comp;
     this.initModifierProperties(elem,data);
     if(this.dynamicProperties.length){
@@ -3755,12 +3804,12 @@ TrimModifier.prototype.initModifierProperties = function(elem,data){
     }
 };
 
-TrimModifier.prototype.getSegmentsLength = function(keyframes){
-    var closed = keyframes.c;
-    var pathV = keyframes.v;
-    var pathO = keyframes.o;
-    var pathI = keyframes.i;
-    var i, len = pathV.length;
+TrimModifier.prototype.getSegmentsLength = function(shapeData){
+    var closed = shapeData.c;
+    var pathV = shapeData.v;
+    var pathO = shapeData.o;
+    var pathI = shapeData.i;
+    var i, len = shapeData._length;
     var lengths = [];
     var totalLength = 0;
     for(i=0;i<len-1;i+=1){
@@ -3817,7 +3866,6 @@ TrimModifier.prototype.calculateShapeEdges = function(s, e, shapeLength, addedLe
             shapeSegments.push([shapeS, shapeE]);
         }
     }
-    //console.log(shapeSegments);
     if(!shapeSegments.length){
         shapeSegments.push([0,0]);
     }
@@ -3832,36 +3880,28 @@ TrimModifier.prototype.processShapes = function(firstFrame){
     var e = this.eValue;
     var pathsData,pathData, totalShapeLength, totalModifierLength = 0;
 
-
     if(e === s){
         for(i=0;i<len;i+=1){
-            this.shapes[i].shape.paths = [];
+            this.shapes[i].localShapeCollection.releaseShapes();
             this.shapes[i].shape.mdf = true;
+            this.shapes[i].shape.paths = this.shapes[i].localShapeCollection;
         }
-    } else if((e === 1 && s === 0) || (e===0 && s === 1)){
-        for(i=0;i<len;i+=1){
-            shapeData = this.shapes[i];
-            if(shapeData.shape.paths !== shapeData.last){
-                shapeData.shape.mdf = true;
-                shapeData.last = shapeData.shape.paths;
-            }
-        }
-    } else {
-        var segments = [], shapeData, newShapes;
+    } else if(!((e === 1 && s === 0) || (e===0 && s === 1))){
+        var segments = [], shapeData, localShapeCollection;
         for(i=0;i<len;i+=1){
             shapeData = this.shapes[i];
             if(!shapeData.shape.mdf && !this.mdf && !firstFrame && this.m !== 2){
-                shapeData.shape.paths = shapeData.last;
+                shapeData.shape.paths = shapeData.localShapeCollection;
             } else {
                 shapePaths = shapeData.shape.paths;
-                jLen = shapePaths.length;
+                jLen = shapePaths._length;
                 totalShapeLength = 0;
                 if(!shapeData.shape.mdf && shapeData.pathsData){
                     totalShapeLength = shapeData.totalShapeLength;
                 } else {
                     pathsData = [];
                     for(j=0;j<jLen;j+=1){
-                        pathData = this.getSegmentsLength(shapePaths[j]);
+                        pathData = this.getSegmentsLength(shapePaths.shapes[j]);
                         pathsData.push(pathData);
                         totalShapeLength += pathData.totalLength;
                     }
@@ -3876,9 +3916,10 @@ TrimModifier.prototype.processShapes = function(firstFrame){
         var shapeS = s, shapeE = e, addedLength = 0;
         var j, jLen;
         for(i = len - 1; i >= 0; i -= 1){
-            newShapes = [];
             shapeData = this.shapes[i];
             if (shapeData.shape.mdf) {
+                localShapeCollection = shapeData.localShapeCollection;
+                localShapeCollection.releaseShapes();
                 if(this.m === 2 && len > 1) {
                     var edges = this.calculateShapeEdges(s, e, shapeData.totalShapeLength, addedLength, totalModifierLength);
                     addedLength += shapeData.totalShapeLength;
@@ -3910,30 +3951,29 @@ TrimModifier.prototype.processShapes = function(firstFrame){
                             e:shapeData.totalShapeLength*(shapeE - 1)
                         })
                     }
-                    var newShapeData = this.addShapes(shapeData,segments[0]);
+                    var newShapesData = this.addShapes(shapeData,segments[0]);
                     if (segments[0].s !== segments[0].e) {
                         var lastPos;
-                        newShapes.push(newShapeData);
                         if(segments.length > 1){
                             if(shapeData.shape.v.c){
-                                this.addShapes(shapeData,segments[1], newShapeData);
+                                var lastShape = newShapesData.pop();
+                                this.addPaths(newShapesData, localShapeCollection);
+                                newShapesData = this.addShapes(shapeData,segments[1], lastShape);
                             } else {
-                                newShapeData.i[0] = [newShapeData.v[0][0],newShapeData.v[0][1]];
-                                lastPos = newShapeData.v.length-1;
-                                newShapeData.o[lastPos] = [newShapeData.v[lastPos][0],newShapeData.v[lastPos][1]];
-                                newShapeData = this.addShapes(shapeData,segments[1]);
-                                newShapes.push(newShapeData);
+                                this.addPaths(newShapesData, localShapeCollection);
+                                newShapesData = this.addShapes(shapeData,segments[1]);
                             }
-                        }
-                        newShapeData.i[0] = [newShapeData.v[0][0],newShapeData.v[0][1]];
-                        lastPos = newShapeData.v.length-1;
-                        newShapeData.o[lastPos] = [newShapeData.v[lastPos][0],newShapeData.v[lastPos][1]];
+                        } 
+                        this.addPaths(newShapesData, localShapeCollection);
                     }
                     
                 }
-                shapeData.last = newShapes;
-                shapeData.shape.paths = newShapes;
+                shapeData.shape.paths = localShapeCollection;
             }
+        }
+    } else if(this.mdf){
+        for(i=0;i<len;i+=1){
+            this.shapes[i].shape.mdf = true;
         }
     }
     if(!this.dynamicProperties.length){
@@ -3941,66 +3981,107 @@ TrimModifier.prototype.processShapes = function(firstFrame){
     }
 }
 
-TrimModifier.prototype.addSegment = function(pt1,pt2,pt3,pt4,shapePath,pos) {
-    shapePath.o[pos] = pt2;
-    shapePath.i[pos+1] = pt3;
-    shapePath.v[pos+1] = pt4;
-    shapePath.v[pos] = pt1;
+TrimModifier.prototype.addPaths = function(newPaths, localShapeCollection) {
+    var i, len = newPaths.length;
+    for(i = 0; i < len; i += 1) {
+        localShapeCollection.addShape(newPaths[i])
+    }
+}
+
+TrimModifier.prototype.addSegment = function(pt1,pt2,pt3,pt4,shapePath,pos, newShape) {
+    /*console.log(pt1, 'vertex: v, at: ', pos);
+    console.log(pt2, 'vertex: o, at: ', pos);
+    console.log(pt3, 'vertex: i, at: ', pos + 1);
+    console.log(pt4, 'vertex: v, at: ', pos + 1);
+    console.log('newShape: ', newShape);*/
+    shapePath.setXYAt(pt2[0],pt2[1],'o',pos);
+    shapePath.setXYAt(pt3[0],pt3[1],'i',pos + 1);
+    if(newShape){
+        shapePath.setXYAt(pt1[0],pt1[1],'v',pos);
+    }
+    shapePath.setXYAt(pt4[0],pt4[1],'v',pos + 1);
 }
 
 TrimModifier.prototype.addShapes = function(shapeData, shapeSegment, shapePath){
     var pathsData = shapeData.pathsData;
-    var shapePaths = shapeData.shape.paths;
-    var i, len = shapePaths.length, j, jLen;
+    var shapePaths = shapeData.shape.paths.shapes;
+    var i, len = shapeData.shape.paths._length, j, jLen;
     var addedLength = 0;
     var currentLengthData,segmentCount;
     var lengths;
     var segment;
+    var shapes = [];
+    var initPos;
+    var newShape = true;
     if(!shapePath){
-        shapePath = {
-            c: false,
-            v:[],
-            i:[],
-            o:[]
-        };
+        shapePath = shape_pool.newShape();
         segmentCount = 0;
+        initPos = 0;
     } else {
-        segmentCount = shapePath.v.length - 1;
+        segmentCount = shapePath._length;
+        initPos = shapePath._length;
     }
+    shapes.push(shapePath);
     for(i=0;i<len;i+=1){
         lengths = pathsData[i].lengths;
+        shapePath.c = shapePaths[i].c;
         jLen = shapePaths[i].c ? lengths.length : lengths.length + 1;
         for(j=1;j<jLen;j+=1){
             currentLengthData = lengths[j-1];
             if(addedLength + currentLengthData.addedLength < shapeSegment.s){
                 addedLength += currentLengthData.addedLength;
+                shapePath.c = false;
             } else if(addedLength > shapeSegment.e){
+                shapePath.c = false;
                 break;
             } else {
                 if(shapeSegment.s <= addedLength && shapeSegment.e >= addedLength + currentLengthData.addedLength){
-                    this.addSegment(shapePaths[i].v[j-1],shapePaths[i].o[j-1],shapePaths[i].i[j],shapePaths[i].v[j],shapePath,segmentCount);
-
+                    this.addSegment(shapePaths[i].v[j-1],shapePaths[i].o[j-1],shapePaths[i].i[j],shapePaths[i].v[j],shapePath,segmentCount,newShape);
+                    newShape = false;
                 } else {
                     segment = bez.getNewSegment(shapePaths[i].v[j-1],shapePaths[i].v[j],shapePaths[i].o[j-1],shapePaths[i].i[j], (shapeSegment.s - addedLength)/currentLengthData.addedLength,(shapeSegment.e - addedLength)/currentLengthData.addedLength, lengths[j-1]);
-                    this.addSegment(segment.pt1,segment.pt3,segment.pt4,segment.pt2,shapePath,segmentCount);
+                    this.addSegment(segment.pt1,segment.pt3,segment.pt4,segment.pt2,shapePath,segmentCount,newShape);
+                    newShape = false;
+                    shapePath.c = false;
                 }
                 addedLength += currentLengthData.addedLength;
                 segmentCount += 1;
             }
         }
         if(shapePaths[i].c){
+            currentLengthData = lengths[j-1];
             if(addedLength <= shapeSegment.e){
                 var segmentLength = lengths[j-1].addedLength;
                 if(shapeSegment.s <= addedLength && shapeSegment.e >= addedLength + segmentLength){
-                    this.addSegment(shapePaths[i].v[j-1],shapePaths[i].o[j-1],shapePaths[i].i[0],shapePaths[i].v[0],shapePath,segmentCount);
+                    this.addSegment(shapePaths[i].v[j-1],shapePaths[i].o[j-1],shapePaths[i].i[0],shapePaths[i].v[0],shapePath,segmentCount,newShape);
+                    newShape = false;
                 }else{
                     segment = bez.getNewSegment(shapePaths[i].v[j-1],shapePaths[i].v[0],shapePaths[i].o[j-1],shapePaths[i].i[0], (shapeSegment.s - addedLength)/segmentLength,(shapeSegment.e - addedLength)/segmentLength, lengths[j-1]);
-                    this.addSegment(segment.pt1,segment.pt3,segment.pt4,segment.pt2,shapePath,segmentCount);
+                    this.addSegment(segment.pt1,segment.pt3,segment.pt4,segment.pt2,shapePath,segmentCount,newShape);
+                    newShape = false;
+                    shapePath.c = false;
                 }
+            } else {
+                shapePath.c = false;
             }
+            addedLength += currentLengthData.addedLength;
+            segmentCount += 1;
+        }
+        if(shapePath._length){
+            shapePath.setXYAt(shapePath.v[initPos][0],shapePath.v[initPos][1],'i',initPos);
+            shapePath.setXYAt(shapePath.v[shapePath._length - 1][0],shapePath.v[shapePath._length - 1][1],'o',shapePath._length - 1);
+        }
+        if(addedLength > shapeSegment.e){
+            break;
+        }
+        if(i<len-1){
+            shapePath = shape_pool.newShape();
+            newShape = true;
+            shapes.push(shapePath);
+            segmentCount = 0;
         }
     }
-    return shapePath;
+    return shapes;
 
 }
 
@@ -4032,18 +4113,22 @@ RoundCornersModifier.prototype.initModifierProperties = function(elem,data){
 };
 
 RoundCornersModifier.prototype.processPath = function(path, round){
-    var i, len = path.v.length;
-    var vValues = [],oValues = [],iValues = [];
-    var currentV,currentI,currentO,closerV, newV,newO,newI,distance,newPosPerc;
+    var cloned_path = shape_pool.newShape();
+    cloned_path.c = path.c;
+    var i, len = path._length;
+    var currentV,currentI,currentO,closerV, newV,newO,newI,distance,newPosPerc,index = 0;
+    var vX,vY,oX,oY,iX,iY;
     for(i=0;i<len;i+=1){
         currentV = path.v[i];
         currentO = path.o[i];
         currentI = path.i[i];
         if(currentV[0]===currentO[0] && currentV[1]===currentO[1] && currentV[0]===currentI[0] && currentV[1]===currentI[1]){
             if((i===0 || i === len - 1) && !path.c){
-                vValues.push(currentV);
-                oValues.push(currentO);
-                iValues.push(currentI);
+                cloned_path.setTripleAt(currentV[0],currentV[1],currentO[0],currentO[1],currentI[0],currentI[1],index);
+                /*cloned_path.v[index] = currentV;
+                cloned_path.o[index] = currentO;
+                cloned_path.i[index] = currentI;*/
+                index += 1;
             } else {
                 if(i===0){
                     closerV = path.v[len-1];
@@ -4052,12 +4137,18 @@ RoundCornersModifier.prototype.processPath = function(path, round){
                 }
                 distance = Math.sqrt(Math.pow(currentV[0]-closerV[0],2)+Math.pow(currentV[1]-closerV[1],2));
                 newPosPerc = distance ? Math.min(distance/2,round)/distance : 0;
-                newV = [currentV[0]+(closerV[0]-currentV[0])*newPosPerc,currentV[1]-(currentV[1]-closerV[1])*newPosPerc];
+                vX = iX = currentV[0]+(closerV[0]-currentV[0])*newPosPerc;
+                vY = iY = currentV[1]-(currentV[1]-closerV[1])*newPosPerc;
+                oX = vX-(vX-currentV[0])*roundCorner;
+                oY = vY-(vY-currentV[1])*roundCorner;
+                cloned_path.setTripleAt(vX,vY,oX,oY,iX,iY,index);
+                /*newV = [currentV[0]+(closerV[0]-currentV[0])*newPosPerc,currentV[1]-(currentV[1]-closerV[1])*newPosPerc];
                 newI = newV;
                 newO = [newV[0]-(newV[0]-currentV[0])*roundCorner,newV[1]-(newV[1]-currentV[1])*roundCorner];
-                vValues.push(newV);
-                oValues.push(newO);
-                iValues.push(newI);
+                cloned_path.v[index] = newV;
+                cloned_path.i[index] = newI;
+                cloned_path.o[index] = newO;*/
+                index += 1;
 
                 if(i === len - 1){
                     closerV = path.v[0];
@@ -4066,50 +4157,53 @@ RoundCornersModifier.prototype.processPath = function(path, round){
                 }
                 distance = Math.sqrt(Math.pow(currentV[0]-closerV[0],2)+Math.pow(currentV[1]-closerV[1],2));
                 newPosPerc = distance ? Math.min(distance/2,round)/distance : 0;
-                newV = [currentV[0]+(closerV[0]-currentV[0])*newPosPerc,currentV[1]+(closerV[1]-currentV[1])*newPosPerc];
+                vX = oX = currentV[0]+(closerV[0]-currentV[0])*newPosPerc;
+                vY = oY = currentV[1]+(closerV[1]-currentV[1])*newPosPerc;
+                iX = vX-(vX-currentV[0])*roundCorner;
+                iY = vY-(vY-currentV[1])*roundCorner;
+                cloned_path.setTripleAt(vX,vY,oX,oY,iX,iY,index);
+
+                /*newV = [currentV[0]+(closerV[0]-currentV[0])*newPosPerc,currentV[1]+(closerV[1]-currentV[1])*newPosPerc];
                 newI = [newV[0]-(newV[0]-currentV[0])*roundCorner,newV[1]-(newV[1]-currentV[1])*roundCorner];
                 newO = newV;
-                vValues.push(newV);
-                oValues.push(newO);
-                iValues.push(newI);
+                cloned_path.v[index] = newV;
+                cloned_path.i[index] = newI;
+                cloned_path.o[index] = newO;*/
+                index += 1;
             }
         } else {
-            vValues.push(path.v[i]);
-            oValues.push(path.o[i]);
-            iValues.push(path.i[i]);
+            /*cloned_path.v[index] = path.v[i];
+            cloned_path.o[index] = path.o[i];
+            cloned_path.i[index] = path.i[i];*/
+            cloned_path.setTripleAt(path.v[i][0],path.v[i][1],path.o[i][0],path.o[i][1],path.i[i][0],path.i[i][1],index);
+            index += 1;
         }
     }
-    return {
-        v:vValues,
-        o:oValues,
-        i:iValues,
-        c:path.c
-    };
+    return cloned_path;
 }
 
-RoundCornersModifier.prototype.processShapes = function(){
+RoundCornersModifier.prototype.processShapes = function(firstFrame){
     var shapePaths;
     var i, len = this.shapes.length;
     var j, jLen;
     var rd = this.rd.v;
 
     if(rd !== 0){
-        var shapeData, newPaths;
+        var shapeData, newPaths, localShapeCollection;
         for(i=0;i<len;i+=1){
-            newPaths = [];
             shapeData = this.shapes[i];
-            if(!shapeData.shape.mdf && !this.mdf){
-                shapeData.shape.paths = shapeData.last;
-            } else {
+            newPaths = shapeData.shape.paths;
+            localShapeCollection = shapeData.localShapeCollection;
+            if(!(!shapeData.shape.mdf && !this.mdf && !firstFrame)){
+                localShapeCollection.releaseShapes();
                 shapeData.shape.mdf = true;
-                shapePaths = shapeData.shape.paths;
-                jLen = shapePaths.length;
+                shapePaths = shapeData.shape.paths.shapes;
+                jLen = shapeData.shape.paths._length;
                 for(j=0;j<jLen;j+=1){
-                    newPaths.push(this.processPath(shapePaths[j],rd));
+                    localShapeCollection.addShape(this.processPath(shapePaths[j],rd));
                 }
-                shapeData.shape.paths = newPaths;
-                shapeData.last = newPaths;
             }
+            shapeData.shape.paths = shapeData.localShapeCollection;
         }
 
     }
@@ -4120,6 +4214,234 @@ RoundCornersModifier.prototype.processShapes = function(){
 
 
 ShapeModifiers.registerModifier('rd',RoundCornersModifier);
+function RepeaterModifier(){};
+RepeaterModifier.prototype.processKeys = function(forceRender){
+    if(this.elem.globalData.frameId === this.frameId && !forceRender){
+        return;
+    }
+    this.mdf = forceRender ? true : false;
+    var i, len = this.dynamicProperties.length;
+
+    for(i=0;i<len;i+=1){
+        this.dynamicProperties[i].getValue();
+        if(this.dynamicProperties[i].mdf){
+            this.mdf = true;
+        }
+    }
+};
+
+RepeaterModifier.prototype.initModifierProperties = function(elem,data){
+    this.getValue = this.processKeys;
+    this.c = PropertyFactory.getProp(elem,data.c,0,null,this.dynamicProperties);
+    this.o = PropertyFactory.getProp(elem,data.o,0,null,this.dynamicProperties);
+    this.tr = PropertyFactory.getProp(elem,data.tr,2,null,this.dynamicProperties);
+    this.data = data;
+    if(!this.dynamicProperties.length){
+        this.getValue(true);
+    }
+    this.pMatrix = new Matrix();
+    this.rMatrix = new Matrix();
+    this.sMatrix = new Matrix();
+    this.tMatrix = new Matrix();
+    this.matrix = new Matrix();
+};
+
+RepeaterModifier.prototype.applyTransforms = function(pMatrix, rMatrix, sMatrix, transform, perc, inv){
+    var dir = inv ? -1 : 1;
+    var scaleX = transform.s.v[0] + (1 - transform.s.v[0]) * (1 - perc);
+    var scaleY = transform.s.v[1] + (1 - transform.s.v[1]) * (1 - perc);
+    pMatrix.translate(transform.p.v[0] * dir * perc, transform.p.v[1] * dir * perc, transform.p.v[2]);
+    rMatrix.translate(-transform.a.v[0], -transform.a.v[1], transform.a.v[2]);
+    rMatrix.rotate(-transform.r.v * dir * perc);
+    rMatrix.translate(transform.a.v[0], transform.a.v[1], transform.a.v[2]);
+    sMatrix.translate(-transform.a.v[0], -transform.a.v[1], transform.a.v[2]);
+    sMatrix.scale(inv ? 1/scaleX : scaleX, inv ? 1/scaleY : scaleY);
+    sMatrix.translate(transform.a.v[0], transform.a.v[1], transform.a.v[2]);
+}
+
+RepeaterModifier.prototype.init = function(elem, arr, pos, elemsData, dynamicProperties) {
+    this.elem = elem;
+    this.arr = arr;
+    this.pos = pos;
+    this.elemsData = elemsData;
+    this._currentCopies = 0;
+    this._elements = [];
+    this._groups = [];
+    this.dynamicProperties = [];
+    this.frameId = -1;
+    this.initModifierProperties(elem,arr[pos]);
+    var cont = 0;
+    while(pos>0){
+        pos -= 1;
+        //this._elements.unshift(arr.splice(pos,1)[0]);
+        this._elements.unshift(arr[pos]);
+        cont += 1;
+    }
+    if(this.dynamicProperties.length){
+        this.k = true;
+        dynamicProperties.push(this);
+    }else{
+        this.getValue(true);
+    }
+}
+
+RepeaterModifier.prototype.resetElements = function(elements){
+    var i, len = elements.length;
+    for(i = 0; i < len; i += 1) {
+        elements[i]._processed = false;
+        if(elements[i].ty === 'gr'){
+            this.resetElements(elements[i].it);
+        }
+    }
+}
+
+RepeaterModifier.prototype.cloneElements = function(elements){
+    var i, len = elements.length;
+    var newElements = JSON.parse(JSON.stringify(elements));
+    this.resetElements(newElements);
+    return newElements;
+}
+
+RepeaterModifier.prototype.changeGroupRender = function(elements, renderFlag) {
+    var i, len = elements.length;
+    for(i = 0; i < len ; i += 1) {
+        elements[i]._render = renderFlag;
+        if(elements[i].ty === 'gr') {
+            this.changeGroupRender(elements[i].it, renderFlag);
+        }
+    }
+}
+
+RepeaterModifier.prototype.processShapes = function(firstFrame){
+
+    if(this.elem.globalData.frameId === this.frameId){
+        return;
+    }
+    this.frameId = this.elem.globalData.frameId;
+    if(!this.dynamicProperties.length && !firstFrame){
+        this.mdf = false;
+    }
+    if(this.mdf){
+        var copies = Math.ceil(this.c.v);
+        if(this._groups.length < copies){
+            while(this._groups.length < copies){
+                var group = {
+                    it:this.cloneElements(this._elements),
+                    ty:'gr'
+                }
+                group.it.push({"a":{"a":0,"ix":1,"k":[0,0]},"nm":"Transform","o":{"a":0,"ix":7,"k":100},"p":{"a":0,"ix":2,"k":[0,0]},"r":{"a":0,"ix":6,"k":0},"s":{"a":0,"ix":3,"k":[100,100]},"sa":{"a":0,"ix":5,"k":0},"sk":{"a":0,"ix":4,"k":0},"ty":"tr"});
+                
+                this.arr.splice(0,0,group);
+                this._groups.splice(0,0,group);
+                this._currentCopies += 1;
+            }
+            this.elem.reloadShapes();
+        }
+        var i, cont = 0, renderFlag;
+        for(i = 0; i  <= this._groups.length - 1; i += 1){
+            renderFlag = cont < copies;
+            this._groups[i]._render = renderFlag;
+            this.changeGroupRender(this._groups[i].it, renderFlag);
+            cont += 1;
+        }
+        
+        this._currentCopies = copies;
+        this.elem.firstFrame = true;
+        ////
+
+        var offset = this.o.v;
+        var offsetModulo = offset%1;
+        var roundOffset = offset > 0 ? Math.floor(offset) : Math.ceil(offset);
+        var k;
+        var tMat = this.tr.v.props;
+        var pProps = this.pMatrix.props;
+        var rProps = this.rMatrix.props;
+        var sProps = this.sMatrix.props;
+        this.pMatrix.reset();
+        this.rMatrix.reset();
+        this.sMatrix.reset();
+        this.tMatrix.reset();
+        this.matrix.reset();
+        var iteration = 0;
+
+        if(offset > 0) {
+            while(iteration<roundOffset){
+                this.applyTransforms(this.pMatrix, this.rMatrix, this.sMatrix, this.tr, 1, false);
+                iteration += 1;
+            }
+            if(offsetModulo){
+                this.applyTransforms(this.pMatrix, this.rMatrix, this.sMatrix, this.tr, offsetModulo, false);
+                iteration += offsetModulo;
+            }
+        } else if(offset < 0) {
+            while(iteration>roundOffset){
+                this.applyTransforms(this.pMatrix, this.rMatrix, this.sMatrix, this.tr, 1, true);
+                iteration -= 1;
+            }
+            if(offsetModulo){
+                this.applyTransforms(this.pMatrix, this.rMatrix, this.sMatrix, this.tr, - offsetModulo, true);
+                iteration -= offsetModulo;
+            }
+        }
+        i = this.data.m === 1 ? 0 : this._currentCopies - 1;
+        var dir = this.data.m === 1 ? 1 : -1;
+        cont = this._currentCopies;
+        while(cont){
+            if(iteration !== 0){
+                if((i !== 0 && dir === 1) || (i !== this._currentCopies - 1 && dir === -1)){
+                    this.applyTransforms(this.pMatrix, this.rMatrix, this.sMatrix, this.tr, 1, false);
+                }
+                this.matrix.transform(rProps[0],rProps[1],rProps[2],rProps[3],rProps[4],rProps[5],rProps[6],rProps[7],rProps[8],rProps[9],rProps[10],rProps[11],rProps[12],rProps[13],rProps[14],rProps[15]);
+                this.matrix.transform(sProps[0],sProps[1],sProps[2],sProps[3],sProps[4],sProps[5],sProps[6],sProps[7],sProps[8],sProps[9],sProps[10],sProps[11],sProps[12],sProps[13],sProps[14],sProps[15]);
+                this.matrix.transform(pProps[0],pProps[1],pProps[2],pProps[3],pProps[4],pProps[5],pProps[6],pProps[7],pProps[8],pProps[9],pProps[10],pProps[11],pProps[12],pProps[13],pProps[14],pProps[15]);
+                var items = this.elemsData[i].it;
+                var itemsTransform = items[items.length - 1].transform.mProps.v.props;
+                var j, jLen = itemsTransform.length;
+                for(j=0;j<jLen;j+=1) {
+                    itemsTransform[j] = this.matrix.props[j];
+                }
+                this.matrix.reset();
+            } else {
+                this.matrix.reset();
+                var items = this.elemsData[i].it;
+                var itemsTransform = items[items.length - 1].transform.mProps.v.props;
+                var j, jLen = itemsTransform.length;
+                for(j=0;j<jLen;j+=1) {
+                    itemsTransform[j] = this.matrix.props[j];
+                }
+            }
+            iteration += 1;
+            cont -= 1;
+            i += dir;
+        }
+    }
+}
+
+RepeaterModifier.prototype.addShape = function(){}
+
+ShapeModifiers.registerModifier('rp',RepeaterModifier);
+function ShapeCollection(){
+	this._length = 0;
+	this._maxLength = 4;
+	this.shapes = Array.apply(null,{length:this._maxLength});
+};
+
+ShapeCollection.prototype.addShape = function(shapeData){
+	if(this._length === this._maxLength){
+		this.shapes = this.shapes.concat(Array.apply(null,{length:this._maxLength}));
+		this._maxLength *= 2;
+	}
+	this.shapes[this._length] = shapeData;
+	this._length += 1;
+};
+
+ShapeCollection.prototype.releaseShapes = function(){
+	var i;
+	for(i = 0; i < this._length; i += 1) {
+		shape_pool.release(this.shapes[i]);
+	}
+	this._length = 0;
+};
 var ImagePreloader = (function(){
 
     function imageLoaded(){
@@ -4209,12 +4531,832 @@ var filtersFactory = (function(){
                 var feColorMatrix = document.createElementNS(svgNS,'feColorMatrix');
                 feColorMatrix.setAttribute('type','matrix');
                 feColorMatrix.setAttribute('color-interpolation-filters','sRGB');
-                feColorMatrix.setAttribute('values','0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 0 1');
+                feColorMatrix.setAttribute('values','0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 1 1');
                 return feColorMatrix;
 	}
 
 	return ob;
 }())
+function TextAnimatorProperty(textData, renderType, elem){
+    this.mdf = false;
+    this._firstFrame = true;
+	this._hasMaskedPath = false;
+	this._frameId = -1;
+	this._dynamicProperties = [];
+	this._textData = textData;
+	this._renderType = renderType;
+	this._elem = elem;
+	this._animatorsData = Array.apply(null,{length:this._textData.a.length});
+	this._pathData = {}
+	this._moreOptions = {
+		alignment: {}
+	};
+	this.renderedLetters = [];
+    this.lettersChangedFlag = false;
+
+}
+
+TextAnimatorProperty.prototype.searchProperties = function(dynamicProperties){
+    var i, len = this._textData.a.length, animatorData, animatorProps;
+    for(i=0;i<len;i+=1){
+        animatorProps = this._textData.a[i];
+        animatorData = {
+            a: {},
+            s: {}
+        };
+        if('r' in animatorProps.a) {
+            animatorData.a.r = PropertyFactory.getProp(this._elem,animatorProps.a.r,0,degToRads,this._dynamicProperties);
+        }
+        if('rx' in animatorProps.a) {
+            animatorData.a.rx = PropertyFactory.getProp(this._elem,animatorProps.a.rx,0,degToRads,this._dynamicProperties);
+        }
+        if('ry' in animatorProps.a) {
+            animatorData.a.ry = PropertyFactory.getProp(this._elem,animatorProps.a.ry,0,degToRads,this._dynamicProperties);
+        }
+        if('sk' in animatorProps.a) {
+            animatorData.a.sk = PropertyFactory.getProp(this._elem,animatorProps.a.sk,0,degToRads,this._dynamicProperties);
+        }
+        if('sa' in animatorProps.a) {
+            animatorData.a.sa = PropertyFactory.getProp(this._elem,animatorProps.a.sa,0,degToRads,this._dynamicProperties);
+        }
+        if('s' in animatorProps.a) {
+            animatorData.a.s = PropertyFactory.getProp(this._elem,animatorProps.a.s,1,0.01,this._dynamicProperties);
+        }
+        if('a' in animatorProps.a) {
+            animatorData.a.a = PropertyFactory.getProp(this._elem,animatorProps.a.a,1,0,this._dynamicProperties);
+        }
+        if('o' in animatorProps.a) {
+            animatorData.a.o = PropertyFactory.getProp(this._elem,animatorProps.a.o,0,0.01,this._dynamicProperties);
+        }
+        if('p' in animatorProps.a) {
+            animatorData.a.p = PropertyFactory.getProp(this._elem,animatorProps.a.p,1,0,this._dynamicProperties);
+        }
+        if('sw' in animatorProps.a) {
+            animatorData.a.sw = PropertyFactory.getProp(this._elem,animatorProps.a.sw,0,0,this._dynamicProperties);
+        }
+        if('sc' in animatorProps.a) {
+            animatorData.a.sc = PropertyFactory.getProp(this._elem,animatorProps.a.sc,1,0,this._dynamicProperties);
+        }
+        if('fc' in animatorProps.a) {
+            animatorData.a.fc = PropertyFactory.getProp(this._elem,animatorProps.a.fc,1,0,this._dynamicProperties);
+        }
+        if('fh' in animatorProps.a) {
+            animatorData.a.fh = PropertyFactory.getProp(this._elem,animatorProps.a.fh,0,0,this._dynamicProperties);
+        }
+        if('fs' in animatorProps.a) {
+            animatorData.a.fs = PropertyFactory.getProp(this._elem,animatorProps.a.fs,0,0.01,this._dynamicProperties);
+        }
+        if('fb' in animatorProps.a) {
+            animatorData.a.fb = PropertyFactory.getProp(this._elem,animatorProps.a.fb,0,0.01,this._dynamicProperties);
+        }
+        if('t' in animatorProps.a) {
+            animatorData.a.t = PropertyFactory.getProp(this._elem,animatorProps.a.t,0,0,this._dynamicProperties);
+        }
+        animatorData.s = PropertyFactory.getTextSelectorProp(this._elem,animatorProps.s,this._dynamicProperties);
+        animatorData.s.t = animatorProps.s.t;
+        this._animatorsData[i] = animatorData;
+    }
+    if(this._textData.p && 'm' in this._textData.p){
+        this._pathData = {
+            f: PropertyFactory.getProp(this._elem,this._textData.p.f,0,0,this._dynamicProperties),
+            l: PropertyFactory.getProp(this._elem,this._textData.p.l,0,0,this._dynamicProperties),
+            r: this._textData.p.r,
+            m: this._elem.maskManager.getMaskProperty(this._textData.p.m)
+        };
+        this._hasMaskedPath = true;
+    } else {
+        this._hasMaskedPath = false;
+    }
+    this._moreOptions.alignment = PropertyFactory.getProp(this._elem,this._textData.m.a,1,0,this._dynamicProperties);
+    if(this._dynamicProperties.length) {
+    	dynamicProperties.push(this);
+    }
+}
+
+TextAnimatorProperty.prototype.getMeasures = function(documentData, lettersChangedFlag){
+    this.lettersChangedFlag = lettersChangedFlag;
+    if(!this.mdf && !this._firstFrame && !lettersChangedFlag && (!this._hasMaskedPath || !this._pathData.m.mdf)) {
+        return;
+    }
+    this._firstFrame = false;
+    var alignment = this._moreOptions.alignment.v;
+    var animators = this._animatorsData;
+    var textData = this._textData;
+    var matrixHelper = this.mHelper;
+    var renderType = this._renderType;
+    var renderedLettersCount = this.renderedLetters.length;
+    var data = this.data;
+    var xPos,yPos;
+    var i, len;
+    var letters = documentData.l;
+    if(this._hasMaskedPath) {
+        var mask = this._pathData.m;
+        if(!this._pathData.n || this._pathData.mdf){
+            var paths = mask.v;
+            if(this._pathData.r){
+                paths = reversePath(paths);
+            }
+            var pathInfo = {
+                tLength: 0,
+                segments: []
+            };
+            len = paths._length - 1;
+            var pathData;
+            var totalLength = 0;
+            for (i = 0; i < len; i += 1) {
+                pathData = {
+                    s: paths.v[i],
+                    e: paths.v[i + 1],
+                    to: [paths.o[i][0] - paths.v[i][0], paths.o[i][1] - paths.v[i][1]],
+                    ti: [paths.i[i + 1][0] - paths.v[i + 1][0], paths.i[i + 1][1] - paths.v[i + 1][1]]
+                };
+                bez.buildBezierData(pathData);
+                pathInfo.tLength += pathData.bezierData.segmentLength;
+                pathInfo.segments.push(pathData);
+                totalLength += pathData.bezierData.segmentLength;
+            }
+            i = len;
+            if (mask.v.c) {
+                pathData = {
+                    s: paths.v[i],
+                    e: paths.v[0],
+                    to: [paths.o[i][0] - paths.v[i][0], paths.o[i][1] - paths.v[i][1]],
+                    ti: [paths.i[0][0] - paths.v[0][0], paths.i[0][1] - paths.v[0][1]]
+                };
+                bez.buildBezierData(pathData);
+                pathInfo.tLength += pathData.bezierData.segmentLength;
+                pathInfo.segments.push(pathData);
+                totalLength += pathData.bezierData.segmentLength;
+            }
+            this._pathData.pi = pathInfo;
+        }
+        var pathInfo = this._pathData.pi;
+
+        var currentLength = this._pathData.f.v, segmentInd = 0, pointInd = 1, currentPoint, prevPoint, points;
+        var segmentLength = 0, flag = true;
+        var segments = pathInfo.segments;
+        if (currentLength < 0 && mask.v.c) {
+            if (pathInfo.tLength < Math.abs(currentLength)) {
+                currentLength = -Math.abs(currentLength) % pathInfo.tLength;
+            }
+            segmentInd = segments.length - 1;
+            points = segments[segmentInd].bezierData.points;
+            pointInd = points.length - 1;
+            while (currentLength < 0) {
+                currentLength += points[pointInd].partialLength;
+                pointInd -= 1;
+                if (pointInd < 0) {
+                    segmentInd -= 1;
+                    points = segments[segmentInd].bezierData.points;
+                    pointInd = points.length - 1;
+                }
+            }
+
+        }
+        points = segments[segmentInd].bezierData.points;
+        prevPoint = points[pointInd - 1];
+        currentPoint = points[pointInd];
+        var partialLength = currentPoint.partialLength;
+        var perc, tanAngle;
+    }
+
+
+    len = letters.length;
+    xPos = 0;
+    yPos = 0;
+    var yOff = documentData.s*1.2*.714;
+    var firstLine = true;
+    var animatorProps, animatorSelector;
+    var j, jLen;
+    var lettersValue = Array.apply(null,{length:len}), letterValue;
+
+    jLen = animators.length;
+    if (lettersChangedFlag) {
+        for (j = 0; j < jLen; j += 1) {
+            animatorSelector = animators[j].s;
+            animatorSelector.getValue(true);
+        }
+    }
+    var lastLetter;
+
+    var mult, ind = -1, offf, xPathPos, yPathPos;
+    var initPathPos = currentLength,initSegmentInd = segmentInd, initPointInd = pointInd, currentLine = -1;
+    var elemOpacity;
+    var sc,sw,fc,k;
+    var lineLength = 0;
+    var letterSw,letterSc,letterFc,letterM = '',letterP = this.defaultPropsArray,letterO;
+    for( i = 0; i < len; i += 1) {
+        matrixHelper.reset();
+        elemOpacity = 1;
+        if(letters[i].n) {
+            xPos = 0;
+            yPos += documentData.yOffset;
+            yPos += firstLine ? 1 : 0;
+            currentLength = initPathPos ;
+            firstLine = false;
+            lineLength = 0;
+            if(this._hasMaskedPath) {
+                segmentInd = initSegmentInd;
+                pointInd = initPointInd;
+                points = segments[segmentInd].bezierData.points;
+                prevPoint = points[pointInd - 1];
+                currentPoint = points[pointInd];
+                partialLength = currentPoint.partialLength;
+                segmentLength = 0;
+            }
+            lettersValue[i] = this.emptyProp;
+        }else{
+            if(this._hasMaskedPath) {
+                if(currentLine !== letters[i].line){
+                    switch(documentData.j){
+                        case 1:
+                            currentLength += totalLength - documentData.lineWidths[letters[i].line];
+                            break;
+                        case 2:
+                            currentLength += (totalLength - documentData.lineWidths[letters[i].line])/2;
+                            break;
+                    }
+                    currentLine = letters[i].line;
+                }
+                if (ind !== letters[i].ind) {
+                    if (letters[ind]) {
+                        currentLength += letters[ind].extra;
+                    }
+                    currentLength += letters[i].an / 2;
+                    ind = letters[i].ind;
+                }
+                currentLength += alignment[0] * letters[i].an / 200;
+                var animatorOffset = 0;
+                for (j = 0; j < jLen; j += 1) {
+                    animatorProps = animators[j].a;
+                    if ('p' in animatorProps) {
+                        animatorSelector = animators[j].s;
+                        mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                        if(mult.length){
+                            animatorOffset += animatorProps.p.v[0] * mult[0];
+                        } else{
+                            animatorOffset += animatorProps.p.v[0] * mult;
+                        }
+
+                    }
+                    if ('a' in animatorProps) {
+                        animatorSelector = animators[j].s;
+                        mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                        if(mult.length){
+                            animatorOffset += animatorProps.a.v[0] * mult[0];
+                        } else{
+                            animatorOffset += animatorProps.a.v[0] * mult;
+                        }
+
+                    }
+                }
+                flag = true;
+                while (flag) {
+                    if (segmentLength + partialLength >= currentLength + animatorOffset || !points) {
+                        perc = (currentLength + animatorOffset - segmentLength) / currentPoint.partialLength;
+                        xPathPos = prevPoint.point[0] + (currentPoint.point[0] - prevPoint.point[0]) * perc;
+                        yPathPos = prevPoint.point[1] + (currentPoint.point[1] - prevPoint.point[1]) * perc;
+                        matrixHelper.translate(-alignment[0]*letters[i].an/200, -(alignment[1] * yOff / 100));
+                        flag = false;
+                    } else if (points) {
+                        segmentLength += currentPoint.partialLength;
+                        pointInd += 1;
+                        if (pointInd >= points.length) {
+                            pointInd = 0;
+                            segmentInd += 1;
+                            if (!segments[segmentInd]) {
+                                if (mask.v.c) {
+                                    pointInd = 0;
+                                    segmentInd = 0;
+                                    points = segments[segmentInd].bezierData.points;
+                                } else {
+                                    segmentLength -= currentPoint.partialLength;
+                                    points = null;
+                                }
+                            } else {
+                                points = segments[segmentInd].bezierData.points;
+                            }
+                        }
+                        if (points) {
+                            prevPoint = currentPoint;
+                            currentPoint = points[pointInd];
+                            partialLength = currentPoint.partialLength;
+                        }
+                    }
+                }
+                offf = letters[i].an / 2 - letters[i].add;
+                matrixHelper.translate(-offf, 0, 0);
+            } else {
+                offf = letters[i].an/2 - letters[i].add;
+                matrixHelper.translate(-offf,0,0);
+
+                // Grouping alignment
+                matrixHelper.translate(-alignment[0]*letters[i].an/200, -alignment[1]*yOff/100, 0);
+            }
+
+            lineLength += letters[i].l/2;
+            for(j=0;j<jLen;j+=1){
+                animatorProps = animators[j].a;
+                if ('t' in animatorProps) {
+                    animatorSelector = animators[j].s;
+                    mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                    if(this._hasMaskedPath) {
+                        if(mult.length) {
+                            currentLength += animatorProps.t*mult[0];
+                        } else {
+                            currentLength += animatorProps.t*mult;
+                        }
+                    }else{
+                        if(mult.length) {
+                            xPos += animatorProps.t.v*mult[0];
+                        } else {
+                            xPos += animatorProps.t.v*mult;
+                        }
+                    }
+                }
+            }
+            lineLength += letters[i].l/2;
+            if(documentData.strokeWidthAnim) {
+                sw = documentData.sw || 0;
+            }
+            if(documentData.strokeColorAnim) {
+                if(documentData.sc){
+                    sc = [documentData.sc[0], documentData.sc[1], documentData.sc[2]];
+                }else{
+                    sc = [0,0,0];
+                }
+            }
+            if(documentData.fillColorAnim && documentData.fc) {
+                fc = [documentData.fc[0], documentData.fc[1], documentData.fc[2]];
+            }
+            for(j=0;j<jLen;j+=1){
+                animatorProps = animators[j].a;
+                if ('a' in animatorProps) {
+                    animatorSelector = animators[j].s;
+                    mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+
+                    if(mult.length){
+                        matrixHelper.translate(-animatorProps.a.v[0]*mult[0], -animatorProps.a.v[1]*mult[1], animatorProps.a.v[2]*mult[2]);
+                    } else {
+                        matrixHelper.translate(-animatorProps.a.v[0]*mult, -animatorProps.a.v[1]*mult, animatorProps.a.v[2]*mult);
+                    }
+                }
+            }
+            for(j=0;j<jLen;j+=1){
+                animatorProps = animators[j].a;
+                if ('s' in animatorProps) {
+                    animatorSelector = animators[j].s;
+                    mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                    if(mult.length){
+                        matrixHelper.scale(1+((animatorProps.s.v[0]-1)*mult[0]),1+((animatorProps.s.v[1]-1)*mult[1]),1);
+                    } else {
+                        matrixHelper.scale(1+((animatorProps.s.v[0]-1)*mult),1+((animatorProps.s.v[1]-1)*mult),1);
+                    }
+                }
+            }
+            for(j=0;j<jLen;j+=1) {
+                animatorProps = animators[j].a;
+                animatorSelector = animators[j].s;
+                mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                if ('sk' in animatorProps) {
+                    if(mult.length) {
+                        matrixHelper.skewFromAxis(-animatorProps.sk.v * mult[0], animatorProps.sa.v * mult[1]);
+                    } else {
+                        matrixHelper.skewFromAxis(-animatorProps.sk.v * mult, animatorProps.sa.v * mult);
+                    }
+                }
+                if ('r' in animatorProps) {
+                    if(mult.length) {
+                        matrixHelper.rotateZ(-animatorProps.r.v * mult[2]);
+                    } else {
+                        matrixHelper.rotateZ(-animatorProps.r.v * mult);
+                    }
+                }
+                if ('ry' in animatorProps) {
+
+                    if(mult.length) {
+                        matrixHelper.rotateY(animatorProps.ry.v*mult[1]);
+                    }else{
+                        matrixHelper.rotateY(animatorProps.ry.v*mult);
+                    }
+                }
+                if ('rx' in animatorProps) {
+                    if(mult.length) {
+                        matrixHelper.rotateX(animatorProps.rx.v*mult[0]);
+                    } else {
+                        matrixHelper.rotateX(animatorProps.rx.v*mult);
+                    }
+                }
+                if ('o' in animatorProps) {
+                    if(mult.length) {
+                        elemOpacity += ((animatorProps.o.v)*mult[0] - elemOpacity)*mult[0];
+                    } else {
+                        elemOpacity += ((animatorProps.o.v)*mult - elemOpacity)*mult;
+                    }
+                }
+                if (documentData.strokeWidthAnim && 'sw' in animatorProps) {
+                    if(mult.length) {
+                        sw += animatorProps.sw.v*mult[0];
+                    } else {
+                        sw += animatorProps.sw.v*mult;
+                    }
+                }
+                if (documentData.strokeColorAnim && 'sc' in animatorProps) {
+                    for(k=0;k<3;k+=1){
+                        if(mult.length) {
+                            sc[k] = Math.round(255*(sc[k] + (animatorProps.sc.v[k] - sc[k])*mult[0]));
+                        } else {
+                            sc[k] = Math.round(255*(sc[k] + (animatorProps.sc.v[k] - sc[k])*mult));
+                        }
+                    }
+                }
+                if (documentData.fillColorAnim && documentData.fc) {
+                    if('fc' in animatorProps){
+                        for(k=0;k<3;k+=1){
+                            if(mult.length) {
+                                fc[k] = fc[k] + (animatorProps.fc.v[k] - fc[k])*mult[0];
+                            } else {
+                                fc[k] = fc[k] + (animatorProps.fc.v[k] - fc[k])*mult;
+                                //console.log('mult',mult);
+                                //console.log(Math.round(fc[k] + (animatorProps.fc.v[k] - fc[k])*mult));
+                            }
+                        }
+                    }
+                    if('fh' in animatorProps){
+                        if(mult.length) {
+                            fc = addHueToRGB(fc,animatorProps.fh.v*mult[0]);
+                        } else {
+                            fc = addHueToRGB(fc,animatorProps.fh.v*mult);
+                        }
+                    }
+                    if('fs' in animatorProps){
+                        if(mult.length) {
+                            fc = addSaturationToRGB(fc,animatorProps.fs.v*mult[0]);
+                        } else {
+                            fc = addSaturationToRGB(fc,animatorProps.fs.v*mult);
+                        }
+                    }
+                    if('fb' in animatorProps){
+                        if(mult.length) {
+                            fc = addBrightnessToRGB(fc,animatorProps.fb.v*mult[0]);
+                        } else {
+                            fc = addBrightnessToRGB(fc,animatorProps.fb.v*mult);
+                        }
+                    }
+                }
+            }
+
+            for(j=0;j<jLen;j+=1){
+                animatorProps = animators[j].a;
+
+                if ('p' in animatorProps) {
+                    animatorSelector = animators[j].s;
+                    mult = animatorSelector.getMult(letters[i].anIndexes[j],textData.a[j].s.totalChars);
+                    if(this._hasMaskedPath) {
+                        if(mult.length) {
+                            matrixHelper.translate(0, animatorProps.p.v[1] * mult[0], -animatorProps.p.v[2] * mult[1]);
+                        } else {
+                            matrixHelper.translate(0, animatorProps.p.v[1] * mult, -animatorProps.p.v[2] * mult);
+                        }
+                    }else{
+                        if(mult.length) {
+                            matrixHelper.translate(animatorProps.p.v[0] * mult[0], animatorProps.p.v[1] * mult[1], -animatorProps.p.v[2] * mult[2]);
+                        } else {
+                            matrixHelper.translate(animatorProps.p.v[0] * mult, animatorProps.p.v[1] * mult, -animatorProps.p.v[2] * mult);
+                        }
+                    }
+                }
+            }
+            if(documentData.strokeWidthAnim){
+                letterSw = sw < 0 ? 0 : sw;
+            }
+            if(documentData.strokeColorAnim){
+                letterSc = 'rgb('+Math.round(sc[0]*255)+','+Math.round(sc[1]*255)+','+Math.round(sc[2]*255)+')';
+            }
+            if(documentData.fillColorAnim && documentData.fc){
+                letterFc = 'rgb('+Math.round(fc[0]*255)+','+Math.round(fc[1]*255)+','+Math.round(fc[2]*255)+')';
+            }
+
+            if(this._hasMaskedPath) {
+                matrixHelper.translate(0,-documentData.ls);
+
+                matrixHelper.translate(0, alignment[1]*yOff/100 + yPos,0);
+                if (textData.p.p) {
+                    tanAngle = (currentPoint.point[1] - prevPoint.point[1]) / (currentPoint.point[0] - prevPoint.point[0]);
+                    var rot = Math.atan(tanAngle) * 180 / Math.PI;
+                    if (currentPoint.point[0] < prevPoint.point[0]) {
+                        rot += 180;
+                    }
+                    matrixHelper.rotate(-rot * Math.PI / 180);
+                }
+                matrixHelper.translate(xPathPos, yPathPos, 0);
+                currentLength -= alignment[0]*letters[i].an/200;
+                if(letters[i+1] && ind !== letters[i+1].ind){
+                    currentLength += letters[i].an / 2;
+                    currentLength += documentData.tr/1000*documentData.s;
+                }
+            }else{
+
+                matrixHelper.translate(xPos,yPos,0);
+
+                if(documentData.ps){
+                    //matrixHelper.translate(documentData.ps[0],documentData.ps[1],0);
+                    matrixHelper.translate(documentData.ps[0],documentData.ps[1] + documentData.ascent,0);
+                }
+                switch(documentData.j){
+                    case 1:
+                        matrixHelper.translate(documentData.justifyOffset + (documentData.boxWidth - documentData.lineWidths[letters[i].line]),0,0);
+                        break;
+                    case 2:
+                        matrixHelper.translate(documentData.justifyOffset + (documentData.boxWidth - documentData.lineWidths[letters[i].line])/2,0,0);
+                        break;
+                }
+                matrixHelper.translate(0,-documentData.ls);
+                matrixHelper.translate(offf,0,0);
+                matrixHelper.translate(alignment[0]*letters[i].an/200,alignment[1]*yOff/100,0);
+                xPos += letters[i].l + documentData.tr/1000*documentData.s;
+            }
+            if(renderType === 'html'){
+                letterM = matrixHelper.toCSS();
+            }else if(renderType === 'svg'){
+                letterM = matrixHelper.to2dCSS();
+            }else{
+                letterP = [matrixHelper.props[0],matrixHelper.props[1],matrixHelper.props[2],matrixHelper.props[3],matrixHelper.props[4],matrixHelper.props[5],matrixHelper.props[6],matrixHelper.props[7],matrixHelper.props[8],matrixHelper.props[9],matrixHelper.props[10],matrixHelper.props[11],matrixHelper.props[12],matrixHelper.props[13],matrixHelper.props[14],matrixHelper.props[15]];
+            }
+            letterO = elemOpacity;
+
+            if(renderedLettersCount <= i) {
+                letterValue = new LetterProps(letterO,letterSw,letterSc,letterFc,letterM,letterP);
+                this.renderedLetters.push(letterValue);
+                renderedLettersCount += 1;
+                this.lettersChangedFlag = true;
+            } else {
+                letterValue = this.renderedLetters[i];
+                this.lettersChangedFlag = letterValue.update(letterO, letterSw, letterSc, letterFc, letterM, letterP) || this.lettersChangedFlag;
+            }
+        }
+    }
+}
+
+TextAnimatorProperty.prototype.getValue = function(){
+	if(this._elem.globalData.frameId === this._frameId){
+        return;
+    }
+    this._frameId = this._elem.globalData.frameId;
+	var i, len = this._dynamicProperties.length;
+    this.mdf = false;
+	for(i = 0; i < len; i += 1) {
+		this._dynamicProperties[i].getValue();
+        this.mdf = this._dynamicProperties[i].mdf || this.mdf;
+	}
+}
+
+TextAnimatorProperty.prototype.mHelper = new Matrix();
+TextAnimatorProperty.prototype.defaultPropsArray = [];
+function LetterProps(o, sw, sc, fc, m, p){
+    this.o = o;
+    this.sw = sw;
+    this.sc = sc;
+    this.fc = fc;
+    this.m = m;
+    this.p = p;
+    this.mdf = {
+    	o: true,
+    	sw: !!sw,
+    	sc: !!sc,
+    	fc: !!fc,
+    	m: true,
+    	p: true
+    };
+}
+
+LetterProps.prototype.update = function(o, sw, sc, fc, m, p) {
+	this.mdf.o = false;
+	this.mdf.sw = false;
+	this.mdf.sc = false;
+	this.mdf.fc = false;
+	this.mdf.m = false;
+	this.mdf.p = false;
+	var updated = false;
+
+	if(this.o !== o) {
+		this.o = o;
+		this.mdf.o = true;
+		updated = true;
+	}
+	if(this.sw !== sw) {
+		this.sw = sw;
+		this.mdf.sw = true;
+		updated = true;
+	}
+	if(this.sc !== sc) {
+		this.sc = sc;
+		this.mdf.sc = true;
+		updated = true;
+	}
+	if(this.fc !== fc) {
+		this.fc = fc;
+		this.mdf.fc = true;
+		updated = true;
+	}
+	if(this.m !== m) {
+		this.m = m;
+		this.mdf.m = true;
+		updated = true;
+	}
+	if(p.length && (this.p[0] !== p[0] || this.p[1] !== p[1] || this.p[4] !== p[4] || this.p[5] !== p[5] || this.p[12] !== p[12] || this.p[13] !== p[13])) {
+
+		this.p = p;
+		this.mdf.p = true;
+		updated = true;
+	}
+	return updated;
+}
+var pooling = (function(){
+
+	function double(arr){
+		return arr.concat(Array.apply(null,{length:arr.length}))
+	}
+
+	return {
+		double: double
+	}
+}());
+var point_pool = (function(){
+	var ob = {
+		newPoint: newPoint,
+		release: release
+		/*,getLength:function(){return _length}
+		,getCont:function(){return cont}*/
+	}
+
+	var _length = 0;
+	var _maxLength = 8;
+	var pool = Array.apply(null,{length:_maxLength});
+
+	//var cont = 0;
+
+	function newPoint(){
+		//window.bm_newPoint = window.bm_newPoint ? window.bm_newPoint + 1 : 1;
+		var point;
+		if(_length){
+			_length -= 1;
+			point = pool[_length];
+			//window.bm_reuse = window.bm_reuse ? window.bm_reuse + 1 : 1;
+		} else {
+			point = [0.1,0.1];
+			//cont++;
+			//console.log('new');
+			//window.bm_new = window.bm_new ? window.bm_new + 1 : 1;
+			//point._tst = cont++;
+		}
+		return point;
+	}
+
+	function release(point) {
+		if(_length === _maxLength) {
+			pool = pooling.double(pool);
+			_maxLength = _maxLength*2;
+		}
+		pool[_length] = point;
+		_length += 1;
+		//window.bm_release = window.bm_release ? window.bm_release + 1 : 1;
+		//console.log('release');
+	}
+
+
+	return ob;
+}());
+var shape_pool = (function(){
+	var ob = {
+		clone: clone,
+		newShape: newShape,
+		release: release,
+		releaseArray: releaseArray
+	}
+
+	var _length = 0;
+	var _maxLength = 4;
+	var pool = Array.apply(null,{length:_maxLength});
+
+	function newShape(){
+		var shapePath;
+		if(_length){
+			_length -= 1;
+			shapePath = pool[_length];
+		} else {
+			shapePath = new ShapePath();
+		}
+		return shapePath;
+	}
+
+	function release(shapePath) {
+		if(_length === _maxLength) {
+			pool = pooling.double(pool);
+			_maxLength = _maxLength*2;
+		}
+		var len = shapePath._length, i;
+		for(i = 0; i < len; i += 1) {
+			point_pool.release(shapePath.v[i]);
+			point_pool.release(shapePath.i[i]);
+			point_pool.release(shapePath.o[i]);
+			shapePath.v[i] = null;
+			shapePath.i[i] = null;
+			shapePath.o[i] = null;
+		}
+		shapePath._length = 0;
+		shapePath.c = false;
+		pool[_length] = shapePath;
+		_length += 1;
+	}
+
+	function releaseArray(shapePathsCollection, length) {
+		while(length--) {
+			release(shapePathsCollection[length]);
+		}
+	}
+
+	function clone(shape, transform) {
+		var i, len = shape._length;
+		var cloned = newShape();
+		cloned._length = shape._length;
+		cloned.c = shape.c;
+
+		var pt;
+		
+		for(i = 0; i < len; i += 1) {
+			if(transform){
+				pt = transform.applyToPointArray(shape.v[i][0],shape.v[i][1],0,2);
+				cloned.setXYAt(pt[0],pt[1],'v',i);
+				point_pool.release(pt);
+				pt = transform.applyToPointArray(shape.o[i][0],shape.o[i][1],0,2);
+				cloned.setXYAt(pt[0],pt[1],'o',i);
+				point_pool.release(pt);
+				pt = transform.applyToPointArray(shape.i[i][0],shape.i[i][1],0,2);
+				cloned.setXYAt(pt[0],pt[1],'i',i);
+				point_pool.release(pt);
+			}else{
+				cloned.setTripleAt(shape.v[i][0],shape.v[i][1],shape.o[i][0],shape.o[i][1],shape.i[i][0],shape.i[i][1], i);
+			}
+		}
+		return cloned
+	}
+
+
+	return ob;
+}());
+var shapeCollection_pool = (function(){
+	var ob = {
+		newShapeCollection: newShapeCollection,
+		release: release,
+		clone: clone
+	}
+
+	var _length = 0;
+	var _maxLength = 4;
+	var pool = Array.apply(null,{length:_maxLength});
+
+	var cont = 0;
+
+	function newShapeCollection(){
+		var shapeCollection;
+		if(_length){
+			_length -= 1;
+			shapeCollection = pool[_length];
+		} else {
+			shapeCollection = new ShapeCollection();
+		}
+		return shapeCollection;
+	}
+
+	function release(shapeCollection) {
+		var i, len = shapeCollection._length;
+		for(i = 0; i < len; i += 1) {
+			shape_pool.release(shapeCollection.shapes[i]);
+		}
+		shapeCollection._length = 0;
+
+		if(_length === _maxLength) {
+			pool = pooling.double(pool);
+			_maxLength = _maxLength*2;
+		}
+		pool[_length] = shapeCollection;
+		_length += 1;
+	}
+
+	function clone(shapeCollection, originCollection) {
+		release(shapeCollection);
+		if(_length === _maxLength) {
+			pool = pooling.double(pool);
+			_maxLength = _maxLength*2;
+		}
+		pool[_length] = shapeCollection;
+		_length += 1;
+	}
+
+
+	return ob;
+}());
 function BaseRenderer(){}
 BaseRenderer.prototype.checkLayers = function(num){
     var i, len = this.layers.length, data;
@@ -4244,11 +5386,18 @@ BaseRenderer.prototype.createItem = function(layer){
             return this.createShape(layer);
         case 5:
             return this.createText(layer);
+        case 13:
+            return this.createCamera(layer);
         case 99:
             return null;
     }
     return this.createBase(layer);
 };
+
+BaseRenderer.prototype.createCamera = function(){
+    throw new Error('You\'re using a 3d camera. Try the html renderer.');
+}
+
 BaseRenderer.prototype.buildAllItems = function(){
     var i, len = this.layers.length;
     for(i=0;i<len;i+=1){
@@ -4294,9 +5443,11 @@ BaseRenderer.prototype.buildElementParenting = function(element, parentName, hie
                 this.addPendingElement(element);
             } else if(layers[i].parent !== undefined){
                 hierarchy.push(elements[i]);
+                elements[i]._isParent = true;
                 this.buildElementParenting(element,layers[i].parent, hierarchy);
             } else {
                 hierarchy.push(elements[i]);
+                elements[i]._isParent = true;
                 element.setHierarchy(hierarchy);
             }
 
@@ -4318,8 +5469,11 @@ function SVGRenderer(animationItem, config){
     };
     this.renderConfig = {
         preserveAspectRatio: (config && config.preserveAspectRatio) || 'xMidYMid meet',
-        progressiveLoad: (config && config.progressiveLoad) || false
+        progressiveLoad: (config && config.progressiveLoad) || false,
+        hideOnTransparent: (config && config.hideOnTransparent === false) ? false : true,
+        viewBoxOnly: (config && config.viewBoxOnly) || false
     };
+    this.globalData.renderConfig = this.renderConfig;
     this.elements = [];
     this.pendingElements = [];
     this.destroyed = false;
@@ -4357,12 +5511,14 @@ SVGRenderer.prototype.createSolid = function (data) {
 SVGRenderer.prototype.configAnimation = function(animData){
     this.layerElement = document.createElementNS(svgNS,'svg');
     this.layerElement.setAttribute('xmlns','http://www.w3.org/2000/svg');
-    this.layerElement.setAttribute('width',animData.w);
-    this.layerElement.setAttribute('height',animData.h);
     this.layerElement.setAttribute('viewBox','0 0 '+animData.w+' '+animData.h);
+    if(!this.renderConfig.viewBoxOnly) {
+        this.layerElement.setAttribute('width',animData.w);
+        this.layerElement.setAttribute('height',animData.h);
+        this.layerElement.style.width = '100%';
+        this.layerElement.style.height = '100%';
+    }
     this.layerElement.setAttribute('preserveAspectRatio',this.renderConfig.preserveAspectRatio);
-    this.layerElement.style.width = '100%';
-    this.layerElement.style.height = '100%';
     //this.layerElement.style.transform = 'translate3d(0,0,0)';
     //this.layerElement.style.transformOrigin = this.layerElement.style.mozTransformOrigin = this.layerElement.style.webkitTransformOrigin = this.layerElement.style['-webkit-transform'] = "0px 0px 0px";
     this.animationItem.wrapper.appendChild(this.layerElement);
@@ -4374,10 +5530,12 @@ SVGRenderer.prototype.configAnimation = function(animData){
     this.globalData.getAssetsPath = this.animationItem.getAssetsPath.bind(this.animationItem);
     this.globalData.progressiveLoad = this.renderConfig.progressiveLoad;
     this.globalData.frameId = 0;
+    this.globalData.nm = animData.nm;
     this.globalData.compSize = {
         w: animData.w,
         h: animData.h
     };
+    this.data = animData;
     this.globalData.frameRate = animData.fr;
     var maskElement = document.createElementNS(svgNS, 'clipPath');
     var rect = document.createElementNS(svgNS,'rect');
@@ -4389,7 +5547,7 @@ SVGRenderer.prototype.configAnimation = function(animData){
     maskElement.setAttribute('id', maskId);
     maskElement.appendChild(rect);
     var maskedElement = document.createElementNS(svgNS,'g');
-    maskedElement.setAttribute("clip-path", "url(#"+maskId+")");
+    maskedElement.setAttribute("clip-path", "url(" + locationHref + "#"+maskId+")");
     this.layerElement.appendChild(maskedElement);
     defs.appendChild(maskElement);
     this.layerElement = maskedElement;
@@ -4567,8 +5725,8 @@ function MaskElement(data,element,globalData) {
         if((properties[i].mode == 's' || properties[i].mode == 'i') && count == 0){
             rect = document.createElementNS(svgNS, 'rect');
             rect.setAttribute('fill', '#ffffff');
-            rect.setAttribute('width', this.element.comp.data ? this.element.comp.data.w : this.element.globalData.compSize.w);
-            rect.setAttribute('height', this.element.comp.data ? this.element.comp.data.h : this.element.globalData.compSize.h);
+            rect.setAttribute('width', this.element.comp.data.w);
+            rect.setAttribute('height', this.element.comp.data.h);
             currentMasks.push(rect);
         } else {
             rect = null;
@@ -4637,7 +5795,7 @@ function MaskElement(data,element,globalData) {
             mask.setAttribute('id',layerId+'_'+count);
             mask.appendChild(path);
             defs.appendChild(mask);
-            g.setAttribute('mask','url(#'+layerId+'_'+count+')');
+            g.setAttribute('mask','url(' + locationHref + '#'+layerId+'_'+count+')');
 
             currentMasks.length = 0;
             currentMasks.push(g);
@@ -4670,7 +5828,7 @@ function MaskElement(data,element,globalData) {
 
     this.maskElement.setAttribute('id', layerId);
     if(count > 0){
-        this.element.maskedElement.setAttribute(maskRef, "url(#" + layerId + ")");
+        this.element.maskedElement.setAttribute(maskRef, "url(" + locationHref + "#" + layerId + ")");
     }
 
     defs.appendChild(this.maskElement);
@@ -4707,7 +5865,7 @@ MaskElement.prototype.renderFrame = function (finalMat) {
                 if(this.storedData[i].x.v < 0){
                     if(this.storedData[i].lastOperator !== 'erode'){
                         this.storedData[i].lastOperator = 'erode';
-                        this.storedData[i].elem.setAttribute('filter','url(#'+this.storedData[i].filterId+')');
+                        this.storedData[i].elem.setAttribute('filter','url(' + locationHref + '#'+this.storedData[i].filterId+')');
                     }
                     feMorph.setAttribute('radius',-this.storedData[i].x.v);
                 }else{
@@ -4738,14 +5896,10 @@ MaskElement.prototype.createLayerSolidPath = function(){
 };
 
 MaskElement.prototype.drawPath = function(pathData,pathNodes,viewData){
-    var pathString = '';
+    var pathString = " M"+pathNodes.v[0][0]+','+pathNodes.v[0][1];
     var i, len;
-    len = pathNodes.v.length;
+    len = pathNodes._length;
     for(i=1;i<len;i+=1){
-        if(i==1){
-            //pathString += " M"+pathNodes.v[0][0]+','+pathNodes.v[0][1];
-            pathString += " M"+bm_rnd(pathNodes.v[0][0])+','+bm_rnd(pathNodes.v[0][1]);
-        }
         //pathString += " C"+pathNodes.o[i-1][0]+','+pathNodes.o[i-1][1] + " "+pathNodes.i[i][0]+','+pathNodes.i[i][1] + " "+pathNodes.v[i][0]+','+pathNodes.v[i][1];
         pathString += " C"+bm_rnd(pathNodes.o[i-1][0])+','+bm_rnd(pathNodes.o[i-1][1]) + " "+bm_rnd(pathNodes.i[i][0])+','+bm_rnd(pathNodes.i[i][1]) + " "+bm_rnd(pathNodes.v[i][0])+','+bm_rnd(pathNodes.v[i][1]);
     }
@@ -4833,15 +5987,18 @@ BaseElement.prototype.prepareFrame = function(num){
     }
     var i, len = this.dynamicProperties.length;
     for(i=0;i<len;i+=1){
-        this.dynamicProperties[i].getValue();
-        if(this.dynamicProperties[i].mdf){
-            this.elemMdf = true;
-            this.globalData.mdf = true;
+        if(this.isVisible || (this._isParent && this.dynamicProperties[i].type === 'transform')){
+            this.dynamicProperties[i].getValue();
+            if(this.dynamicProperties[i].mdf){
+                this.elemMdf = true;
+                this.globalData.mdf = true;
+            }
         }
     }
-    if(this.data.hasMask){
+    if(this.data.hasMask && this.isVisible){
         this.maskManager.prepareFrame(num*this.data.sr);
     }
+    
     /* TODO check this
     if(this.data.sy){
         if(this.data.sy[0].renderedData[num]){
@@ -4897,7 +6054,9 @@ BaseElement.prototype.initExpressions = function(){
     if(this.data.ty === 0 || this.data.xt){
         this.compInterface = CompExpressionInterface(this);
     } else if(this.data.ty === 4){
-        this.layerInterface.shapeInterface = ShapeExpressionInterface.createShapeInterface(this.shapesData,this.viewData,this.layerInterface);
+        this.layerInterface.shapeInterface = ShapeExpressionInterface.createShapeInterface(this.shapesData,this.itemsData,this.layerInterface);
+    } else if(this.data.ty === 5){
+        this.layerInterface.textInterface = TextExpressionInterface(this);
     }
 }
 
@@ -4959,7 +6118,7 @@ BaseElement.prototype.init = function(){
     if(!this.data.sr){
         this.data.sr = 1;
     }
-    this.dynamicProperties = [];
+    this.dynamicProperties = this.dynamicProperties || [];
     if(this.data.ef){
         this.effects = new EffectsManager(this.data,this,this.dynamicProperties);
         //this.effect = this.effectsManager.bind(this.effectsManager);
@@ -4968,6 +6127,7 @@ BaseElement.prototype.init = function(){
     this.hidden = false;
     this.firstFrame = true;
     this.isVisible = false;
+    this._isParent = false;
     this.currentFrameNum = -99999;
     this.lastNum = -99999;
     if(this.data.ks){
@@ -5027,6 +6187,15 @@ BaseElement.prototype.hide = function(){
 
 };
 
+BaseElement.prototype.sourceRectAtTime = function(){
+    return {
+        top:0,
+        left:0,
+        width:100,
+        height:100
+    }
+};
+
 BaseElement.prototype.mHelper = new Matrix();
 function SVGBaseElement(data,parentContainer,globalData,comp, placeholder){
     this.globalData = globalData;
@@ -5034,9 +6203,11 @@ function SVGBaseElement(data,parentContainer,globalData,comp, placeholder){
     this.data = data;
     this.matteElement = null;
     this.transformedElement = null;
+    this.isTransparent = false;
     this.parentContainer = parentContainer;
     this.layerId = placeholder ? placeholder.layerId : 'ly_'+randomString(10);
     this.placeholder = placeholder;
+    this._sizeChanged = false;
     this.init();
 };
 
@@ -5068,7 +6239,7 @@ SVGBaseElement.prototype.createElements = function(){
                 gg.appendChild(this.layerElement);
                 layerElementParent = gg;
                 masker.appendChild(gg);
-                gg.setAttribute('filter','url(#'+filId+')');
+                gg.setAttribute('filter','url(' + locationHref + '#'+filId+')');
             }
         }else if(this.data.td == 2){
             var maskGroup = document.createElementNS(svgNS,'mask');
@@ -5096,13 +6267,13 @@ SVGBaseElement.prototype.createElements = function(){
             feCTr.appendChild(feFunc);*/
             this.globalData.defs.appendChild(fil);
             var alphaRect = document.createElementNS(svgNS,'rect');
-            alphaRect.setAttribute('width',this.comp.data ? this.comp.data.w : this.globalData.compSize.w);
-            alphaRect.setAttribute('height',this.comp.data ? this.comp.data.h : this.globalData.compSize.h);
+            alphaRect.setAttribute('width',this.comp.data.w);
+            alphaRect.setAttribute('height',this.comp.data.h);
             alphaRect.setAttribute('x','0');
             alphaRect.setAttribute('y','0');
             alphaRect.setAttribute('fill','#ffffff');
             alphaRect.setAttribute('opacity','0');
-            maskGrouper.setAttribute('filter','url(#'+filId+')');
+            maskGrouper.setAttribute('filter','url(' + locationHref + '#'+filId+')');
             maskGrouper.appendChild(alphaRect);
             maskGrouper.appendChild(this.layerElement);
             layerElementParent = maskGrouper;
@@ -5147,7 +6318,7 @@ SVGBaseElement.prototype.createElements = function(){
             this.globalData.defs.appendChild(cp);
         if(this.checkMasks()){
             var cpGroup = document.createElementNS(svgNS,'g');
-            cpGroup.setAttribute('clip-path','url(#'+clipId+')');
+            cpGroup.setAttribute('clip-path','url(' + locationHref + '#'+clipId+')');
             cpGroup.appendChild(this.layerElement);
             this.transformedElement = cpGroup;
             if(layerElementParent){
@@ -5156,7 +6327,7 @@ SVGBaseElement.prototype.createElements = function(){
                 this.baseElement = this.transformedElement;
             }
         } else {
-            this.layerElement.setAttribute('clip-path','url(#'+clipId+')');
+            this.layerElement.setAttribute('clip-path','url(' + locationHref + '#'+clipId+')');
         }
         
     }
@@ -5241,52 +6412,56 @@ SVGBaseElement.prototype.createElements = function(){
 SVGBaseElement.prototype.setBlendMode = BaseElement.prototype.setBlendMode;
 
 SVGBaseElement.prototype.renderFrame = function(parentTransform){
-    if(this.data.ty === 3 || this.data.hd){
+    if(this.data.ty === 3 || this.data.hd || !this.isVisible){
         return false;
     }
 
-    if(!this.isVisible){
-        return this.isVisible;
-    }
     this.lastNum = this.currentFrameNum;
-    this.finalTransform.opMdf = this.finalTransform.op.mdf;
-    this.finalTransform.matMdf = this.finalTransform.mProp.mdf;
+    this.finalTransform.opMdf = this.firstFrame || this.finalTransform.op.mdf;
+    this.finalTransform.matMdf = this.firstFrame || this.finalTransform.mProp.mdf;
     this.finalTransform.opacity = this.finalTransform.op.v;
-    if(this.firstFrame){
-        this.finalTransform.opMdf = true;
-        this.finalTransform.matMdf = true;
-    }
 
     var mat;
     var finalMat = this.finalTransform.mat;
 
     if(this.hierarchy){
-        var i, len = this.hierarchy.length;
-
-        mat = this.finalTransform.mProp.v.props;
-        finalMat.cloneFromProps(mat);
-        for(i=0;i<len;i+=1){
-            this.finalTransform.matMdf = this.hierarchy[i].finalTransform.mProp.mdf ? true : this.finalTransform.matMdf;
-            mat = this.hierarchy[i].finalTransform.mProp.v.props;
-            finalMat.transform(mat[0],mat[1],mat[2],mat[3],mat[4],mat[5],mat[6],mat[7],mat[8],mat[9],mat[10],mat[11],mat[12],mat[13],mat[14],mat[15]);
+        var i = 0, len = this.hierarchy.length;
+        if(!this.finalTransform.matMdf) {
+            while(i < len) {
+                if(this.hierarchy[i].finalTransform.mProp.mdf) {
+                    this.finalTransform.matMdf = true;
+                    break;
+                }
+                i += 1;
+            }
         }
-    }else{
-        if(this.isVisible){
-            finalMat.cloneFromProps(this.finalTransform.mProp.v.props);
+        
+        if(this.finalTransform.matMdf) {
+            mat = this.finalTransform.mProp.v.props;
+            finalMat.cloneFromProps(mat);
+            for(i=0;i<len;i+=1){
+                mat = this.hierarchy[i].finalTransform.mProp.v.props;
+                finalMat.transform(mat[0],mat[1],mat[2],mat[3],mat[4],mat[5],mat[6],mat[7],mat[8],mat[9],mat[10],mat[11],mat[12],mat[13],mat[14],mat[15]);
+            }
         }
-    }
-    if(parentTransform){
-        mat = parentTransform.mat.props;
-        finalMat.transform(mat[0],mat[1],mat[2],mat[3],mat[4],mat[5],mat[6],mat[7],mat[8],mat[9],mat[10],mat[11],mat[12],mat[13],mat[14],mat[15]);
-        this.finalTransform.opacity *= parentTransform.opacity;
-        this.finalTransform.opMdf = parentTransform.opMdf ? true : this.finalTransform.opMdf;
-        this.finalTransform.matMdf = parentTransform.matMdf ? true : this.finalTransform.matMdf;
+        
+    }else if(this.isVisible){
+        finalMat = this.finalTransform.mProp.v;
     }
     if(this.finalTransform.matMdf && this.layerElement){
         this.transformedElement.setAttribute('transform',finalMat.to2dCSS());
     }
     if(this.finalTransform.opMdf && this.layerElement){
-        this.transformedElement.setAttribute('opacity',this.finalTransform.opacity);
+        if(this.finalTransform.op.v <= 0) {
+            if(!this.isTransparent && this.globalData.renderConfig.hideOnTransparent){
+                this.isTransparent = true;
+                this.hide();
+            }
+        } else if(this.hidden && this.isTransparent){
+            this.isTransparent = false;
+            this.show();
+        }
+        this.transformedElement.setAttribute('opacity',this.finalTransform.op.v);
     }
 
     if(this.data.hasMask){
@@ -5320,121 +6495,720 @@ SVGBaseElement.prototype.setMatte = function(id){
     if(!this.matteElement){
         return;
     }
-    this.matteElement.setAttribute("mask", "url(#" + id + ")");
-};
-
-SVGBaseElement.prototype.setMatte = function(id){
-    if(!this.matteElement){
-        return;
-    }
-    this.matteElement.setAttribute("mask", "url(#" + id + ")");
+    this.matteElement.setAttribute("mask", "url(" + locationHref + "#" + id + ")");
 };
 
 SVGBaseElement.prototype.hide = function(){
+    if(!this.hidden){
+        this.layerElement.style.display = 'none';
+        this.hidden = true;
+    }
+};
 
+SVGBaseElement.prototype.show = function(){
+    if(this.isVisible && !this.isTransparent){
+        this.hidden = false;
+        this.layerElement.style.display = 'block';
+    }
+};
+
+function IShapeElement(data,parentContainer,globalData,comp, placeholder){
+    this.shapes = [];
+    this.shapesData = data.shapes;
+    this.stylesList = [];
+    this.itemsData = [];
+    this.prevViewData = [];
+    this.shapeModifiers = [];
+    this.processedElements = [];
+    this._parent.constructor.call(this,data,parentContainer,globalData,comp, placeholder);
+}
+createElement(SVGBaseElement, IShapeElement);
+
+IShapeElement.prototype.identityMatrix = new Matrix();
+
+IShapeElement.prototype.lcEnum = {
+    '1': 'butt',
+    '2': 'round',
+    '3': 'square'
+}
+
+IShapeElement.prototype.ljEnum = {
+    '1': 'miter',
+    '2': 'round',
+    '3': 'butt'
+}
+
+IShapeElement.prototype.searchProcessedElement = function(elem){
+    var i = this.processedElements.length;
+    while(i){
+        i -= 1;
+        if(this.processedElements[i].elem === elem){
+            return this.processedElements[i].pos;
+        }
+    }
+    return 0;
+};
+
+IShapeElement.prototype.addProcessedElement = function(elem, pos){
+    var i = this.processedElements.length;
+    while(i){
+        i -= 1;
+        if(this.processedElements[i].elem === elem){
+            this.processedElements[i].pos = pos;
+            break;
+        }
+    }
+    if(i === 0){
+        this.processedElements.push({
+            elem: elem,
+            pos: pos
+        })
+    }
+};
+
+IShapeElement.prototype.buildExpressionInterface = function(){};
+
+IShapeElement.prototype.createElements = function(){
+    //TODO check if I can use symbol so i can set its viewBox
+    this._parent.createElements.call(this);
+    this.searchShapes(this.shapesData,this.itemsData,this.prevViewData,this.layerElement,this.dynamicProperties, 0, [], true);
+    if(!this.data.hd || this.data.td){
+        styleUnselectableDiv(this.layerElement);
+    }
+};
+
+IShapeElement.prototype.setGradientData = function(pathElement,arr,data){
+
+    var gradientId = 'gr_'+randomString(10);
+    var gfill;
+    if(arr.t === 1){
+        gfill = document.createElementNS(svgNS,'linearGradient');
+    } else {
+        gfill = document.createElementNS(svgNS,'radialGradient');
+    }
+    gfill.setAttribute('id',gradientId);
+    gfill.setAttribute('spreadMethod','pad');
+    gfill.setAttribute('gradientUnits','userSpaceOnUse');
+    var stops = [];
+    var stop, j, jLen;
+    jLen = arr.g.p*4;
+    for(j=0;j<jLen;j+=4){
+        stop = document.createElementNS(svgNS,'stop');
+        gfill.appendChild(stop);
+        stops.push(stop);
+    }
+    pathElement.setAttribute( arr.ty === 'gf' ? 'fill':'stroke','url(#'+gradientId+')');
+    this.globalData.defs.appendChild(gfill);
+    data.gf = gfill;
+    data.cst = stops;
+}
+
+IShapeElement.prototype.setGradientOpacity = function(arr, data, styleOb){
+    if((arr.g.k.k[0].s && arr.g.k.k[0].s.length > arr.g.p*4) || arr.g.k.k.length > arr.g.p*4){
+        var opFill;
+        var stop, j, jLen;
+        var mask = document.createElementNS(svgNS,"mask");
+        var maskElement = document.createElementNS(svgNS, 'path');
+        mask.appendChild(maskElement);
+        var opacityId = 'op_'+randomString(10);
+        var maskId = 'mk_'+randomString(10);
+        mask.setAttribute('id',maskId);
+        if(arr.t === 1){
+            opFill = document.createElementNS(svgNS,'linearGradient');
+        } else {
+            opFill = document.createElementNS(svgNS,'radialGradient');
+        }
+        opFill.setAttribute('id',opacityId);
+        opFill.setAttribute('spreadMethod','pad');
+        opFill.setAttribute('gradientUnits','userSpaceOnUse');
+        jLen = arr.g.k.k[0].s ? arr.g.k.k[0].s.length : arr.g.k.k.length;
+        var stops = [];
+        for(j=arr.g.p*4;j<jLen;j+=2){
+            stop = document.createElementNS(svgNS,'stop');
+            stop.setAttribute('stop-color','rgb(255,255,255)');
+            //stop.setAttribute('offset',Math.round(arr.y[j][0]*100)+'%');
+            //stop.setAttribute('style','stop-color:rgb(255,255,255);stop-opacity:'+arr.y[j][1]);
+            opFill.appendChild(stop);
+            stops.push(stop);
+        }
+        maskElement.setAttribute( arr.ty === 'gf' ? 'fill':'stroke','url(#'+opacityId+')');
+        this.globalData.defs.appendChild(opFill);
+        this.globalData.defs.appendChild(mask);
+        data.of = opFill;
+        data.ost = stops;
+        styleOb.msElem = maskElement;
+        return maskId;
+    }
+};
+
+IShapeElement.prototype.createStyleElement = function(data, level, dynamicProperties){
+    var elementData = {
+    };
+    var styleOb = {
+        data: data,
+        type: data.ty,
+        d: '',
+        ld: '',
+        lvl: level,
+        mdf: false,
+        closed: false
+    };
+    var pathElement = document.createElementNS(svgNS, "path");
+    elementData.o = PropertyFactory.getProp(this,data.o,0,0.01,dynamicProperties);
+    if(data.ty == 'st' || data.ty == 'gs') {
+        pathElement.setAttribute('stroke-linecap', this.lcEnum[data.lc] || 'round');
+        ////pathElement.style.strokeLinecap = this.lcEnum[data.lc] || 'round';
+        pathElement.setAttribute('stroke-linejoin',this.ljEnum[data.lj] || 'round');
+        ////pathElement.style.strokeLinejoin = this.ljEnum[data.lj] || 'round';
+        pathElement.setAttribute('fill-opacity','0');
+        ////pathElement.style.fillOpacity = 0;
+        if(data.lj == 1) {
+            pathElement.setAttribute('stroke-miterlimit',data.ml);
+            ////pathElement.style.strokeMiterlimit = data.ml;
+        }
+
+        elementData.w = PropertyFactory.getProp(this,data.w,0,null,dynamicProperties);
+        if(data.d){
+            var d = PropertyFactory.getDashProp(this,data.d,'svg',dynamicProperties);
+            if(!d.k){
+                pathElement.setAttribute('stroke-dasharray', d.dasharray);
+                ////pathElement.style.strokeDasharray = d.dasharray;
+                pathElement.setAttribute('stroke-dashoffset', d.dashoffset);
+                ////pathElement.style.strokeDashoffset = d.dashoffset;
+            }
+            elementData.d = d;
+        }
+
+    }
+    if(data.ty == 'fl' || data.ty == 'st'){
+        elementData.c = PropertyFactory.getProp(this,data.c,1,255,dynamicProperties);
+    } else {
+        elementData.g = PropertyFactory.getGradientProp(this,data.g,dynamicProperties);
+        if(data.t == 2){
+            elementData.h = PropertyFactory.getProp(this,data.h,1,0.01,dynamicProperties);
+            elementData.a = PropertyFactory.getProp(this,data.a,1,degToRads,dynamicProperties);
+        }
+        elementData.s = PropertyFactory.getProp(this,data.s,1,null,dynamicProperties);
+        elementData.e = PropertyFactory.getProp(this,data.e,1,null,dynamicProperties);
+        this.setGradientData(pathElement,data,elementData, styleOb);
+        var maskId = this.setGradientOpacity(data,elementData, styleOb);
+        if(maskId){
+            pathElement.setAttribute('mask','url(#'+maskId+')');
+        }
+    }
+    elementData.elem = pathElement;
+    //container.appendChild(pathElement);
+    if(data.r === 2) {
+        pathElement.setAttribute('fill-rule', 'evenodd');
+    }
+
+    if(data.ln){
+        pathElement.setAttribute('id',data.ln);
+    }
+    if(data.cl){
+        pathElement.setAttribute('class',data.cl);
+    }
+    styleOb.pElem = pathElement;
+    this.stylesList.push(styleOb);
+    elementData.style = styleOb;
+    return elementData;
+}
+
+IShapeElement.prototype.createGroupElement = function(data) {
+    var elementData = {
+        it: [],
+        prevViewData: []
+    };
+    var g = document.createElementNS(svgNS,'g');
+    elementData.gr = g;
+    if(data.ln){
+        elementData.gr.setAttribute('id',data.ln);
+    }
+    return elementData;
+}
+
+IShapeElement.prototype.createTransformElement = function(data, dynamicProperties) {
+    var elementData = {
+        transform : {
+            op: PropertyFactory.getProp(this,data.o,0,0.01,dynamicProperties),
+            mProps: PropertyFactory.getProp(this,data,2,null,dynamicProperties)
+        },
+        elements: []
+    };
+    return elementData;
+}
+
+IShapeElement.prototype.createShapeElement = function(data, ownTransformers, level, dynamicProperties) {
+    var elementData = {
+        elements : [],
+        caches:[],
+        styles : [],
+        transformers: ownTransformers,
+        lStr: ''
+    };
+    var ty = 4;
+    if(data.ty == 'rc'){
+        ty = 5;
+    }else if(data.ty == 'el'){
+        ty = 6;
+    }else if(data.ty == 'sr'){
+        ty = 7;
+    }
+    elementData.sh = ShapePropertyFactory.getShapeProp(this,data,ty,dynamicProperties);
+    elementData.lvl = level;
+    this.shapes.push(elementData.sh);
+    this.addShapeToModifiers(elementData);
+    return elementData;
+}
+
+var cont = 0;
+
+IShapeElement.prototype.setElementStyles = function(){
+    var j, jLen = this.stylesList.length;
+    var arr = [];
+    for(j=0;j<jLen;j+=1){
+        if(!this.stylesList[j].closed){
+            arr.push(this.stylesList[j]);
+        }
+    }
+    return arr;
+}
+
+IShapeElement.prototype.reloadShapes = function(){
+    this.firstFrame = true;
+    var i, len = this.itemsData.length;
+    for(i=0;i<len;i+=1){
+        this.prevViewData[i] = this.itemsData[i];
+    }
+    this.searchShapes(this.shapesData,this.itemsData,this.prevViewData,this.layerElement,this.dynamicProperties, 0, [], true);
+    var i, len = this.dynamicProperties.length;
+    for(i=0;i<len;i+=1){
+        this.dynamicProperties[i].getValue();
+    }
+    this.renderModifiers();
+}
+
+IShapeElement.prototype.searchShapes = function(arr,itemsData,prevViewData,container,dynamicProperties, level, transformers, render){
+    var ownTransformers = [].concat(transformers);
+    var i, len = arr.length - 1;
+    var j, jLen;
+    var ownStyles = [], ownModifiers = [], styleOb, currentTransform, modifier, processedPos;
+    for(i=len;i>=0;i-=1){
+        processedPos = this.searchProcessedElement(arr[i]);
+        if(!processedPos){
+            arr[i]._render = render;
+        } else {
+            itemsData[i] = prevViewData[processedPos - 1];
+        }
+        if(arr[i].ty == 'fl' || arr[i].ty == 'st' || arr[i].ty == 'gf' || arr[i].ty == 'gs'){
+            if(!processedPos){
+                itemsData[i] = this.createStyleElement(arr[i], level, dynamicProperties);
+            } else {
+                itemsData[i].style.closed = false;
+            }
+            if(arr[i]._render){
+                container.appendChild(itemsData[i].elem);
+            }
+            ownStyles.push(itemsData[i].style);
+        }else if(arr[i].ty == 'gr'){
+            if(!processedPos){
+                itemsData[i] = this.createGroupElement(arr[i]);
+            } else {
+                jLen = itemsData[i].it.length;
+                for(j=0;j<jLen;j+=1){
+                    itemsData[i].prevViewData[j] = itemsData[i].it[j];
+                }
+            }
+            this.searchShapes(arr[i].it,itemsData[i].it,itemsData[i].prevViewData,itemsData[i].gr,dynamicProperties, level + 1, ownTransformers, render);
+            if(arr[i]._render){
+                container.appendChild(itemsData[i].gr);
+            }
+        }else if(arr[i].ty == 'tr'){
+            if(!processedPos){
+                itemsData[i] = this.createTransformElement(arr[i], dynamicProperties);
+            }
+            currentTransform = itemsData[i].transform;
+            ownTransformers.push(currentTransform);
+        }else if(arr[i].ty == 'sh' || arr[i].ty == 'rc' || arr[i].ty == 'el' || arr[i].ty == 'sr'){
+            if(!processedPos){
+                itemsData[i] = this.createShapeElement(arr[i], ownTransformers, level, dynamicProperties);
+            }
+            itemsData[i].elements = this.setElementStyles();
+
+        }else if(arr[i].ty == 'tm' || arr[i].ty == 'rd' || arr[i].ty == 'ms'){
+            if(!processedPos){
+                modifier = ShapeModifiers.getModifier(arr[i].ty);
+                modifier.init(this,arr[i],dynamicProperties);
+                itemsData[i] = modifier;
+                this.shapeModifiers.push(modifier);
+            } else {
+                modifier = itemsData[i];
+                modifier.closed = false;
+            }
+            ownModifiers.push(modifier);
+        }else if(arr[i].ty == 'rp'){
+            if(!processedPos){
+                modifier = ShapeModifiers.getModifier(arr[i].ty);
+                itemsData[i] = modifier;
+                modifier.init(this,arr,i,itemsData,dynamicProperties);
+                this.shapeModifiers.push(modifier);
+                render = false;
+            }else{
+                modifier = itemsData[i];
+                modifier.closed = true;
+            }
+            ownModifiers.push(modifier);
+        }
+        this.addProcessedElement(arr[i], i + 1);
+    }
+    len = ownStyles.length;
+    for(i=0;i<len;i+=1){
+        ownStyles[i].closed = true;
+    }
+    len = ownModifiers.length;
+    for(i=0;i<len;i+=1){
+        ownModifiers[i].closed = true;
+    }
+};
+
+IShapeElement.prototype.addShapeToModifiers = function(data) {
+    var i, len = this.shapeModifiers.length;
+    for(i=0;i<len;i+=1){
+        this.shapeModifiers[i].addShape(data);
+    }
+};
+
+IShapeElement.prototype.renderModifiers = function() {
+    if(!this.shapeModifiers.length){
+        return;
+    }
+    var i, len = this.shapes.length;
+    for(i=0;i<len;i+=1){
+        this.shapes[i].reset();
+    }
+
+
+    len = this.shapeModifiers.length;
+
+    for(i=len-1;i>=0;i-=1){
+        this.shapeModifiers[i].processShapes(this.firstFrame);
+    }
+};
+
+IShapeElement.prototype.renderFrame = function(parentMatrix){
+    //this.reloadShapes();
+    var renderParent = this._parent.renderFrame.call(this,parentMatrix);
+    if(renderParent===false){
+        this.hide();
+        return;
+    }
+    if(this.hidden){
+        this.layerElement.style.display = 'block';
+        this.hidden = false;
+    }
+    this.renderModifiers();
+    var i, len = this.stylesList.length;
+    for(i=0;i<len;i+=1){
+        this.stylesList[i].d = '';
+        this.stylesList[i].mdf = false;
+    }
+    this.renderShape(this.shapesData,this.itemsData, null);
+
+    for (i = 0; i < len; i += 1) {
+        if (this.stylesList[i].ld === '0') {
+            this.stylesList[i].ld = '1';
+            this.stylesList[i].pElem.style.display = 'block';
+            //this.stylesList[i].parent.appendChild(this.stylesList[i].pElem);
+        }
+        if (this.stylesList[i].mdf || this.firstFrame) {
+            this.stylesList[i].pElem.setAttribute('d', this.stylesList[i].d);
+            if(this.stylesList[i].msElem){
+                this.stylesList[i].msElem.setAttribute('d', this.stylesList[i].d);
+            }
+        }
+    }
+    if (this.firstFrame) {
+        this.firstFrame = false;
+    }
+};
+
+IShapeElement.prototype.hide = function(){
+    if(!this.hidden){
+        this.layerElement.style.display = 'none';
+        var i, len = this.stylesList.length;
+        for(i=len-1;i>=0;i-=1){
+            if(this.stylesList[i].ld !== '0'){
+                this.stylesList[i].ld = '0';
+                this.stylesList[i].pElem.style.display = 'none';
+                if(this.stylesList[i].pElem.parentNode){
+                    this.stylesList[i].parent = this.stylesList[i].pElem.parentNode;
+                    //this.stylesList[i].pElem.parentNode.removeChild(this.stylesList[i].pElem);
+                }
+            }
+        }
+        this.hidden = true;
+    }
+};
+
+IShapeElement.prototype.renderShape = function(items,data, container){
+    var i, len = items.length - 1;
+    var ty;
+    for(i=len;i>=0;i-=1){
+        ty = items[i].ty;
+        if(ty == 'tr'){
+            if(this.firstFrame || data[i].transform.op.mdf && container){
+                container.setAttribute('opacity',data[i].transform.op.v);
+            }
+            if(this.firstFrame || data[i].transform.mProps.mdf && container){
+                container.setAttribute('transform',data[i].transform.mProps.v.to2dCSS());
+            }
+        }else if(ty == 'sh' || ty == 'el' || ty == 'rc' || ty == 'sr'){
+            this.renderPath(items[i],data[i]);
+        }else if(ty == 'fl'){
+            this.renderFill(items[i],data[i]);
+        }else if(ty == 'gf'){
+            this.renderGradient(items[i],data[i]);
+        }else if(ty == 'gs'){
+            this.renderGradient(items[i],data[i]);
+            this.renderStroke(items[i],data[i]);
+        }else if(ty == 'st'){
+            this.renderStroke(items[i],data[i]);
+        }else if(ty == 'gr'){
+            this.renderShape(items[i].it,data[i].it, data[i].gr);
+        }else if(ty == 'tm'){
+            //
+        }
+    }
+
+};
+
+IShapeElement.prototype.buildShapeString = function(pathNodes, length, closed, mat) {
+    var i, shapeString = '';
+    for(i = 1; i < length; i += 1) {
+        if (i === 1) {
+            shapeString += " M" + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
+        }
+        shapeString += " C" + mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + mat.applyToPointStringified(pathNodes.i[i][0], pathNodes.i[i][1]) + " " + mat.applyToPointStringified(pathNodes.v[i][0], pathNodes.v[i][1]);
+    }
+    if (length === 1) {
+        shapeString += " M" + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
+    }
+    if (closed && length) {
+        shapeString += " C" + mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + mat.applyToPointStringified(pathNodes.i[0][0], pathNodes.i[0][1]) + " " + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
+        shapeString += 'z';
+    }
+    return shapeString;
+};
+
+IShapeElement.prototype.renderPath = function(pathData,itemData){
+    var len, i, j, jLen,pathStringTransformed,redraw,pathNodes,l, lLen = itemData.elements.length;
+    var lvl = itemData.lvl;
+    if(!pathData._render){
+        return;
+    }
+    for(l=0;l<lLen;l+=1){
+        if(itemData.elements[l].data._render){
+            redraw = itemData.sh.mdf || this.firstFrame;
+            pathStringTransformed = 'M0 0';
+            var paths = itemData.sh.paths;
+            jLen = paths._length;
+            if(itemData.elements[l].lvl < lvl){
+                var mat = this.mHelper.reset(), props;
+                var iterations = lvl - itemData.elements[l].lvl;
+                var k = itemData.transformers.length-1;
+                while(iterations > 0) {
+                    redraw = itemData.transformers[k].mProps.mdf || redraw;
+                    props = itemData.transformers[k].mProps.v.props;
+                    mat.transform(props[0],props[1],props[2],props[3],props[4],props[5],props[6],props[7],props[8],props[9],props[10],props[11],props[12],props[13],props[14],props[15]);
+                    iterations --;
+                    k --;
+                }
+                if(redraw){
+                    for(j=0;j<jLen;j+=1){
+                        pathNodes = paths.shapes[j];
+                        if(pathNodes && pathNodes._length){
+                            pathStringTransformed += this.buildShapeString(pathNodes, pathNodes._length, pathNodes.c, mat);
+                        }
+                    }
+                    itemData.caches[l] = pathStringTransformed;
+                } else {
+                    pathStringTransformed = itemData.caches[l];
+                }
+            } else {
+                if(redraw){
+                    for(j=0;j<jLen;j+=1){
+                        pathNodes = paths.shapes[j];
+                        if(pathNodes && pathNodes._length){
+                            pathStringTransformed += this.buildShapeString(pathNodes, pathNodes._length, pathNodes.c, this.identityMatrix);
+                        }
+                    }
+                    itemData.caches[l] = pathStringTransformed;
+                } else {
+                    pathStringTransformed = itemData.caches[l];
+                }
+            }
+            itemData.elements[l].d += pathStringTransformed;
+            itemData.elements[l].mdf = redraw || itemData.elements[l].mdf;
+        } else {
+            itemData.elements[l].mdf = true;
+        }
+    }
+};
+
+IShapeElement.prototype.renderFill = function(styleData,itemData){
+    var styleElem = itemData.style;
+
+    if(itemData.c.mdf || this.firstFrame){
+        styleElem.pElem.setAttribute('fill','rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')');
+        ////styleElem.pElem.style.fill = 'rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')';
+    }
+    if(itemData.o.mdf || this.firstFrame){
+        styleElem.pElem.setAttribute('fill-opacity',itemData.o.v);
+    }
+};
+
+IShapeElement.prototype.renderGradient = function(styleData,itemData){
+    var gfill = itemData.gf;
+    var opFill = itemData.of;
+    var pt1 = itemData.s.v,pt2 = itemData.e.v;
+
+    if(itemData.o.mdf || this.firstFrame){
+        var attr = styleData.ty === 'gf' ? 'fill-opacity':'stroke-opacity';
+        itemData.elem.setAttribute(attr,itemData.o.v);
+    }
+    //clippedElement.setAttribute('transform','matrix(1,0,0,1,-100,0)');
+    if(itemData.s.mdf || this.firstFrame){
+        var attr1 = styleData.t === 1 ? 'x1':'cx';
+        var attr2 = attr1 === 'x1' ? 'y1':'cy';
+        gfill.setAttribute(attr1,pt1[0]);
+        gfill.setAttribute(attr2,pt1[1]);
+        if(opFill){
+            opFill.setAttribute(attr1,pt1[0]);
+            opFill.setAttribute(attr2,pt1[1]);
+        }
+    }
+    var stops, i, len, stop;
+    if(itemData.g.cmdf || this.firstFrame){
+        stops = itemData.cst;
+        var cValues = itemData.g.c;
+        len = stops.length;
+        for(i=0;i<len;i+=1){
+            stop = stops[i];
+            stop.setAttribute('offset',cValues[i*4]+'%');
+            stop.setAttribute('stop-color','rgb('+cValues[i*4+1]+','+cValues[i*4+2]+','+cValues[i*4+3]+')');
+        }
+    }
+    if(opFill && (itemData.g.omdf || this.firstFrame)){
+        stops = itemData.ost;
+        var oValues = itemData.g.o;
+        len = stops.length;
+        for(i=0;i<len;i+=1){
+            stop = stops[i];
+            stop.setAttribute('offset',oValues[i*2]+'%');
+            stop.setAttribute('stop-opacity',oValues[i*2+1]);
+        }
+    }
+    if(styleData.t === 1){
+        if(itemData.e.mdf  || this.firstFrame){
+            gfill.setAttribute('x2',pt2[0]);
+            gfill.setAttribute('y2',pt2[1]);
+            if(opFill){
+                opFill.setAttribute('x2',pt2[0]);
+                opFill.setAttribute('y2',pt2[1]);
+            }
+        }
+    } else {
+        var rad;
+        if(itemData.s.mdf || itemData.e.mdf || this.firstFrame){
+            rad = Math.sqrt(Math.pow(pt1[0]-pt2[0],2)+Math.pow(pt1[1]-pt2[1],2));
+            gfill.setAttribute('r',rad);
+            if(opFill){
+                opFill.setAttribute('r',rad);
+            }
+        }
+        if(itemData.e.mdf || itemData.h.mdf || itemData.a.mdf || this.firstFrame){
+            if(!rad){
+                rad = Math.sqrt(Math.pow(pt1[0]-pt2[0],2)+Math.pow(pt1[1]-pt2[1],2));
+            }
+            var ang = Math.atan2(pt2[1]-pt1[1], pt2[0]-pt1[0]);
+
+            var percent = itemData.h.v >= 1 ? 0.99 : itemData.h.v <= -1 ? -0.99:itemData.h.v;
+            var dist = rad*percent;
+            var x = Math.cos(ang + itemData.a.v)*dist + pt1[0];
+            var y = Math.sin(ang + itemData.a.v)*dist + pt1[1];
+            gfill.setAttribute('fx',x);
+            gfill.setAttribute('fy',y);
+            if(opFill){
+                opFill.setAttribute('fx',x);
+                opFill.setAttribute('fy',y);
+            }
+        }
+        //gfill.setAttribute('fy','200');
+    }
+};
+
+IShapeElement.prototype.renderStroke = function(styleData,itemData){
+    var styleElem = itemData.style;
+    //TODO fix dashes
+    var d = itemData.d;
+    var dasharray,dashoffset;
+    if(d && d.k && (d.mdf || this.firstFrame)){
+        styleElem.pElem.setAttribute('stroke-dasharray', d.dasharray);
+        ////styleElem.pElem.style.strokeDasharray = d.dasharray;
+        styleElem.pElem.setAttribute('stroke-dashoffset', d.dashoffset);
+        ////styleElem.pElem.style.strokeDashoffset = d.dashoffset;
+    }
+    if(itemData.c && (itemData.c.mdf || this.firstFrame)){
+        styleElem.pElem.setAttribute('stroke','rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')');
+        ////styleElem.pElem.style.stroke = 'rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')';
+    }
+    if(itemData.o.mdf || this.firstFrame){
+        styleElem.pElem.setAttribute('stroke-opacity',itemData.o.v);
+    }
+    if(itemData.w.mdf || this.firstFrame){
+        styleElem.pElem.setAttribute('stroke-width',itemData.w.v);
+        if(styleElem.msElem){
+            styleElem.msElem.setAttribute('stroke-width',itemData.w.v);
+        }
+        ////styleElem.pElem.style.strokeWidth = itemData.w.v;
+    }
+};
+
+IShapeElement.prototype.destroy = function(){
+    this._parent.destroy.call(this._parent);
+    this.shapeData = null;
+    this.itemsData = null;
+    this.parentContainer = null;
+    this.placeholder = null;
 };
 
 function ITextElement(data, animationItem,parentContainer,globalData){
 }
 ITextElement.prototype.init = function(){
+    this._frameId = -1;
+    this.lettersChangedFlag = true;
+    this.currentTextDocumentData = this.data.t.d.k[0].s;
+    this.dynamicProperties = this.dynamicProperties || [];
+    this.textAnimator = new TextAnimatorProperty(this.data.t, this.renderType, this);
     this._parent.init.call(this);
-
-    this.lettersChangedFlag = false;
-    this.currentTextDocumentData = {};
-    var data = this.data;
-    this.viewData = {
-        m:{
-            a: PropertyFactory.getProp(this,data.t.m.a,1,0,this.dynamicProperties)
-        }
-    };
-    var textData = this.data.t;
-    if(textData.a.length){
-        this.viewData.a = Array.apply(null,{length:textData.a.length});
-        var i, len = textData.a.length, animatorData, animatorProps;
-        for(i=0;i<len;i+=1){
-            animatorProps = textData.a[i];
-            animatorData = {
-                a: {},
-                s: {}
-            };
-            if('r' in animatorProps.a) {
-                animatorData.a.r = PropertyFactory.getProp(this,animatorProps.a.r,0,degToRads,this.dynamicProperties);
-            }
-            if('rx' in animatorProps.a) {
-                animatorData.a.rx = PropertyFactory.getProp(this,animatorProps.a.rx,0,degToRads,this.dynamicProperties);
-            }
-            if('ry' in animatorProps.a) {
-                animatorData.a.ry = PropertyFactory.getProp(this,animatorProps.a.ry,0,degToRads,this.dynamicProperties);
-            }
-            if('sk' in animatorProps.a) {
-                animatorData.a.sk = PropertyFactory.getProp(this,animatorProps.a.sk,0,degToRads,this.dynamicProperties);
-            }
-            if('sa' in animatorProps.a) {
-                animatorData.a.sa = PropertyFactory.getProp(this,animatorProps.a.sa,0,degToRads,this.dynamicProperties);
-            }
-            if('s' in animatorProps.a) {
-                animatorData.a.s = PropertyFactory.getProp(this,animatorProps.a.s,1,0.01,this.dynamicProperties);
-            }
-            if('a' in animatorProps.a) {
-                animatorData.a.a = PropertyFactory.getProp(this,animatorProps.a.a,1,0,this.dynamicProperties);
-            }
-            if('o' in animatorProps.a) {
-                animatorData.a.o = PropertyFactory.getProp(this,animatorProps.a.o,0,0.01,this.dynamicProperties);
-            }
-            if('p' in animatorProps.a) {
-                animatorData.a.p = PropertyFactory.getProp(this,animatorProps.a.p,1,0,this.dynamicProperties);
-            }
-            if('sw' in animatorProps.a) {
-                animatorData.a.sw = PropertyFactory.getProp(this,animatorProps.a.sw,0,0,this.dynamicProperties);
-            }
-            if('sc' in animatorProps.a) {
-                animatorData.a.sc = PropertyFactory.getProp(this,animatorProps.a.sc,1,0,this.dynamicProperties);
-            }
-            if('fc' in animatorProps.a) {
-                animatorData.a.fc = PropertyFactory.getProp(this,animatorProps.a.fc,1,0,this.dynamicProperties);
-            }
-            if('fh' in animatorProps.a) {
-                animatorData.a.fh = PropertyFactory.getProp(this,animatorProps.a.fh,0,0,this.dynamicProperties);
-            }
-            if('fs' in animatorProps.a) {
-                animatorData.a.fs = PropertyFactory.getProp(this,animatorProps.a.fs,0,0.01,this.dynamicProperties);
-            }
-            if('fb' in animatorProps.a) {
-                animatorData.a.fb = PropertyFactory.getProp(this,animatorProps.a.fb,0,0.01,this.dynamicProperties);
-            }
-            if('t' in animatorProps.a) {
-                animatorData.a.t = PropertyFactory.getProp(this,animatorProps.a.t,0,0,this.dynamicProperties);
-            }
-            animatorData.s = PropertyFactory.getTextSelectorProp(this,animatorProps.s,this.dynamicProperties);
-            animatorData.s.t = animatorProps.s.t;
-            this.viewData.a[i] = animatorData;
-        }
-    }else{
-        this.viewData.a = [];
-    }
-    if(textData.p && 'm' in textData.p){
-        this.viewData.p = {
-            f: PropertyFactory.getProp(this,textData.p.f,0,0,this.dynamicProperties),
-            l: PropertyFactory.getProp(this,textData.p.l,0,0,this.dynamicProperties),
-            r: textData.p.r,
-            m: this.maskManager.getMaskProperty(textData.p.m)
-        };
-        this.maskPath = true;
-    } else {
-        this.maskPath = false;
-    }
+    this.textAnimator.searchProperties(this.dynamicProperties);
+    this.buildNewText();
 };
+
 ITextElement.prototype.prepareFrame = function(num) {
-    var i = 0, len = this.data.t.d.k.length;
-    var textDocumentData = this.data.t.d.k[i].s;
-    i += 1;
-    while(i<len){
-        if(this.data.t.d.k[i].t > num){
+    if(this._frameId === this.globalData.frameId) {
+         return;
+    }
+    this._frameId = this.globalData.frameId;
+    var textKeys = this.data.t.d.k;
+    var i = 0, len = textKeys.length;
+    while(i < len) {
+        textDocumentData = textKeys[i].s;
+        i += 1;
+        if(i === len || textKeys[i].t > num){
             break;
         }
-        textDocumentData = this.data.t.d.k[i].s;
-        i += 1;
-    }
+    } 
     this.lettersChangedFlag = false;
     if(textDocumentData !== this.currentTextDocumentData){
         this.currentTextDocumentData = textDocumentData;
@@ -5449,8 +7223,9 @@ ITextElement.prototype.createPathShape = function(matrixHelper, shapes) {
     var k, kLen, pathNodes;
     var shapeStr = '';
     for(j=0;j<jLen;j+=1){
-        kLen = shapes[j].ks.k.i.length;
         pathNodes = shapes[j].ks.k;
+        shapeStr += this.buildShapeString(pathNodes, pathNodes.i.length, true, matrixHelper);
+        /*kLen = pathNodes.i.length;
         for(k=1;k<kLen;k+=1){
             if(k==1){
                 shapeStr += " M"+matrixHelper.applyToPointStringified(pathNodes.v[0][0],pathNodes.v[0][1]);
@@ -5458,457 +7233,12 @@ ITextElement.prototype.createPathShape = function(matrixHelper, shapes) {
             shapeStr += " C"+matrixHelper.applyToPointStringified(pathNodes.o[k-1][0],pathNodes.o[k-1][1]) + " "+matrixHelper.applyToPointStringified(pathNodes.i[k][0],pathNodes.i[k][1]) + " "+matrixHelper.applyToPointStringified(pathNodes.v[k][0],pathNodes.v[k][1]);
         }
         shapeStr += " C"+matrixHelper.applyToPointStringified(pathNodes.o[k-1][0],pathNodes.o[k-1][1]) + " "+matrixHelper.applyToPointStringified(pathNodes.i[0][0],pathNodes.i[0][1]) + " "+matrixHelper.applyToPointStringified(pathNodes.v[0][0],pathNodes.v[0][1]);
-        shapeStr += 'z';
+        shapeStr += 'z';*/
     }
     return shapeStr;
 };
 
-ITextElement.prototype.getMeasures = function(){
-
-    var matrixHelper = this.mHelper;
-    var renderType = this.renderType;
-    var data = this.data;
-    var xPos,yPos;
-    var i, len;
-    var documentData = this.currentTextDocumentData;
-    var letters = documentData.l;
-    if(this.maskPath) {
-        var mask = this.viewData.p.m;
-        if(!this.viewData.p.n || this.viewData.p.mdf){
-            var paths = mask.v;
-            if(this.viewData.p.r){
-                paths = reversePath(paths);
-            }
-            var pathInfo = {
-                tLength: 0,
-                segments: []
-            };
-            len = paths.v.length - 1;
-            var pathData;
-            var totalLength = 0;
-            for (i = 0; i < len; i += 1) {
-                pathData = {
-                    s: paths.v[i],
-                    e: paths.v[i + 1],
-                    to: [paths.o[i][0] - paths.v[i][0], paths.o[i][1] - paths.v[i][1]],
-                    ti: [paths.i[i + 1][0] - paths.v[i + 1][0], paths.i[i + 1][1] - paths.v[i + 1][1]]
-                };
-                bez.buildBezierData(pathData);
-                pathInfo.tLength += pathData.bezierData.segmentLength;
-                pathInfo.segments.push(pathData);
-                totalLength += pathData.bezierData.segmentLength;
-            }
-            i = len;
-            if (mask.v.c) {
-                pathData = {
-                    s: paths.v[i],
-                    e: paths.v[0],
-                    to: [paths.o[i][0] - paths.v[i][0], paths.o[i][1] - paths.v[i][1]],
-                    ti: [paths.i[0][0] - paths.v[0][0], paths.i[0][1] - paths.v[0][1]]
-                };
-                bez.buildBezierData(pathData);
-                pathInfo.tLength += pathData.bezierData.segmentLength;
-                pathInfo.segments.push(pathData);
-                totalLength += pathData.bezierData.segmentLength;
-            }
-            this.viewData.p.pi = pathInfo;
-        }
-        var pathInfo = this.viewData.p.pi;
-
-        var currentLength = this.viewData.p.f.v, segmentInd = 0, pointInd = 1, currentPoint, prevPoint, points;
-        var segmentLength = 0, flag = true;
-        var segments = pathInfo.segments;
-        if (currentLength < 0 && mask.v.c) {
-            if (pathInfo.tLength < Math.abs(currentLength)) {
-                currentLength = -Math.abs(currentLength) % pathInfo.tLength;
-            }
-            segmentInd = segments.length - 1;
-            points = segments[segmentInd].bezierData.points;
-            pointInd = points.length - 1;
-            while (currentLength < 0) {
-                currentLength += points[pointInd].partialLength;
-                pointInd -= 1;
-                if (pointInd < 0) {
-                    segmentInd -= 1;
-                    points = segments[segmentInd].bezierData.points;
-                    pointInd = points.length - 1;
-                }
-            }
-
-        }
-        points = segments[segmentInd].bezierData.points;
-        prevPoint = points[pointInd - 1];
-        currentPoint = points[pointInd];
-        var partialLength = currentPoint.partialLength;
-        var perc, tanAngle;
-    }
-
-
-    len = letters.length;
-    xPos = 0;
-    yPos = 0;
-    var yOff = documentData.s*1.2*.714;
-    var firstLine = true;
-    var renderedData = this.viewData, animatorProps, animatorSelector;
-    var j, jLen;
-    var lettersValue = Array.apply(null,{length:len}), letterValue;
-
-    jLen = renderedData.a.length;
-    var lastLetter;
-
-    var mult, ind = -1, offf, xPathPos, yPathPos;
-    var initPathPos = currentLength,initSegmentInd = segmentInd, initPointInd = pointInd, currentLine = -1;
-    var elemOpacity;
-    var sc,sw,fc,k;
-    var lineLength = 0;
-    var letterSw,letterSc,letterFc,letterM,letterP,letterO;
-    for( i = 0; i < len; i += 1) {
-        matrixHelper.reset();
-        elemOpacity = 1;
-        if(letters[i].n) {
-            xPos = 0;
-            yPos += documentData.yOffset;
-            yPos += firstLine ? 1 : 0;
-            currentLength = initPathPos ;
-            firstLine = false;
-            lineLength = 0;
-            if(this.maskPath) {
-                segmentInd = initSegmentInd;
-                pointInd = initPointInd;
-                points = segments[segmentInd].bezierData.points;
-                prevPoint = points[pointInd - 1];
-                currentPoint = points[pointInd];
-                partialLength = currentPoint.partialLength;
-                segmentLength = 0;
-            }
-            lettersValue[i] = this.emptyProp;
-        }else{
-            if(this.maskPath) {
-                if(currentLine !== letters[i].line){
-                    switch(documentData.j){
-                        case 1:
-                            currentLength += totalLength - documentData.lineWidths[letters[i].line];
-                            break;
-                        case 2:
-                            currentLength += (totalLength - documentData.lineWidths[letters[i].line])/2;
-                            break;
-                    }
-                    currentLine = letters[i].line;
-                }
-                if (ind !== letters[i].ind) {
-                    if (letters[ind]) {
-                        currentLength += letters[ind].extra;
-                    }
-                    currentLength += letters[i].an / 2;
-                    ind = letters[i].ind;
-                }
-                currentLength += renderedData.m.a.v[0] * letters[i].an / 200;
-                var animatorOffset = 0;
-                for (j = 0; j < jLen; j += 1) {
-                    animatorProps = renderedData.a[j].a;
-                    if ('p' in animatorProps) {
-                        animatorSelector = renderedData.a[j].s;
-                        mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-                        if(mult.length){
-                            animatorOffset += animatorProps.p.v[0] * mult[0];
-                        } else{
-                            animatorOffset += animatorProps.p.v[0] * mult;
-                        }
-
-                    }
-                }
-                flag = true;
-                while (flag) {
-                    if (segmentLength + partialLength >= currentLength + animatorOffset || !points) {
-                        perc = (currentLength + animatorOffset - segmentLength) / currentPoint.partialLength;
-                        xPathPos = prevPoint.point[0] + (currentPoint.point[0] - prevPoint.point[0]) * perc;
-                        yPathPos = prevPoint.point[1] + (currentPoint.point[1] - prevPoint.point[1]) * perc;
-                        matrixHelper.translate(0, -(renderedData.m.a.v[1] * yOff / 100) + yPos);
-                        flag = false;
-                    } else if (points) {
-                        segmentLength += currentPoint.partialLength;
-                        pointInd += 1;
-                        if (pointInd >= points.length) {
-                            pointInd = 0;
-                            segmentInd += 1;
-                            if (!segments[segmentInd]) {
-                                if (mask.v.c) {
-                                    pointInd = 0;
-                                    segmentInd = 0;
-                                    points = segments[segmentInd].bezierData.points;
-                                } else {
-                                    segmentLength -= currentPoint.partialLength;
-                                    points = null;
-                                }
-                            } else {
-                                points = segments[segmentInd].bezierData.points;
-                            }
-                        }
-                        if (points) {
-                            prevPoint = currentPoint;
-                            currentPoint = points[pointInd];
-                            partialLength = currentPoint.partialLength;
-                        }
-                    }
-                }
-                offf = letters[i].an / 2 - letters[i].add;
-                matrixHelper.translate(-offf, 0, 0);
-            } else {
-                offf = letters[i].an/2 - letters[i].add;
-                matrixHelper.translate(-offf,0,0);
-
-                // Grouping alignment
-                matrixHelper.translate(-renderedData.m.a.v[0]*letters[i].an/200, -renderedData.m.a.v[1]*yOff/100, 0);
-            }
-
-            lineLength += letters[i].l/2;
-            for(j=0;j<jLen;j+=1){
-                animatorProps = renderedData.a[j].a;
-                if ('t' in animatorProps) {
-                    animatorSelector = renderedData.a[j].s;
-                    mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-                    if(this.maskPath) {
-                        if(mult.length) {
-                            currentLength += animatorProps.t*mult[0];
-                        } else {
-                            currentLength += animatorProps.t*mult;
-                        }
-                    }else{
-                        if(mult.length) {
-                            xPos += animatorProps.t.v*mult[0];
-                        } else {
-                            xPos += animatorProps.t.v*mult;
-                        }
-                    }
-                }
-            }
-            lineLength += letters[i].l/2;
-            if(documentData.strokeWidthAnim) {
-                sw = documentData.sw || 0;
-            }
-            if(documentData.strokeColorAnim) {
-                if(documentData.sc){
-                    sc = [documentData.sc[0], documentData.sc[1], documentData.sc[2]];
-                }else{
-                    sc = [0,0,0];
-                }
-            }
-            if(documentData.fillColorAnim) {
-                fc = [documentData.fc[0], documentData.fc[1], documentData.fc[2]];
-            }
-            for(j=0;j<jLen;j+=1){
-                animatorProps = renderedData.a[j].a;
-                if ('a' in animatorProps) {
-                    animatorSelector = renderedData.a[j].s;
-                    mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-
-                    if(mult.length){
-                        matrixHelper.translate(-animatorProps.a.v[0]*mult[0], -animatorProps.a.v[1]*mult[1], animatorProps.a.v[2]*mult[2]);
-                    } else {
-                        matrixHelper.translate(-animatorProps.a.v[0]*mult, -animatorProps.a.v[1]*mult, animatorProps.a.v[2]*mult);
-                    }
-                }
-            }
-            for(j=0;j<jLen;j+=1){
-                animatorProps = renderedData.a[j].a;
-                if ('s' in animatorProps) {
-                    animatorSelector = renderedData.a[j].s;
-                    mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-                    if(mult.length){
-                        matrixHelper.scale(1+((animatorProps.s.v[0]-1)*mult[0]),1+((animatorProps.s.v[1]-1)*mult[1]),1);
-                    } else {
-                        matrixHelper.scale(1+((animatorProps.s.v[0]-1)*mult),1+((animatorProps.s.v[1]-1)*mult),1);
-                    }
-                }
-            }
-            for(j=0;j<jLen;j+=1) {
-                animatorProps = renderedData.a[j].a;
-                animatorSelector = renderedData.a[j].s;
-                mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-                if ('sk' in animatorProps) {
-                    if(mult.length) {
-                        matrixHelper.skewFromAxis(-animatorProps.sk.v * mult[0], animatorProps.sa.v * mult[1]);
-                    } else {
-                        matrixHelper.skewFromAxis(-animatorProps.sk.v * mult, animatorProps.sa.v * mult);
-                    }
-                }
-                if ('r' in animatorProps) {
-                    if(mult.length) {
-                        matrixHelper.rotateZ(-animatorProps.r.v * mult[2]);
-                    } else {
-                        matrixHelper.rotateZ(-animatorProps.r.v * mult);
-                    }
-                }
-                if ('ry' in animatorProps) {
-
-                    if(mult.length) {
-                        matrixHelper.rotateY(animatorProps.ry.v*mult[1]);
-                    }else{
-                        matrixHelper.rotateY(animatorProps.ry.v*mult);
-                    }
-                }
-                if ('rx' in animatorProps) {
-                    if(mult.length) {
-                        matrixHelper.rotateX(animatorProps.rx.v*mult[0]);
-                    } else {
-                        matrixHelper.rotateX(animatorProps.rx.v*mult);
-                    }
-                }
-                if ('o' in animatorProps) {
-                    if(mult.length) {
-                        elemOpacity += ((animatorProps.o.v)*mult[0] - elemOpacity)*mult[0];
-                    } else {
-                        elemOpacity += ((animatorProps.o.v)*mult - elemOpacity)*mult;
-                    }
-                }
-                if (documentData.strokeWidthAnim && 'sw' in animatorProps) {
-                    if(mult.length) {
-                        sw += animatorProps.sw.v*mult[0];
-                    } else {
-                        sw += animatorProps.sw.v*mult;
-                    }
-                }
-                if (documentData.strokeColorAnim && 'sc' in animatorProps) {
-                    for(k=0;k<3;k+=1){
-                        if(mult.length) {
-                            sc[k] = Math.round(255*(sc[k] + (animatorProps.sc.v[k] - sc[k])*mult[0]));
-                        } else {
-                            sc[k] = Math.round(255*(sc[k] + (animatorProps.sc.v[k] - sc[k])*mult));
-                        }
-                    }
-                }
-                if (documentData.fillColorAnim) {
-                    if('fc' in animatorProps){
-                        for(k=0;k<3;k+=1){
-                            if(mult.length) {
-                                fc[k] = fc[k] + (animatorProps.fc.v[k] - fc[k])*mult[0];
-                            } else {
-                                fc[k] = fc[k] + (animatorProps.fc.v[k] - fc[k])*mult;
-                                //console.log('mult',mult);
-                                //console.log(Math.round(fc[k] + (animatorProps.fc.v[k] - fc[k])*mult));
-                            }
-                        }
-                    }
-                    if('fh' in animatorProps){
-                        if(mult.length) {
-                            fc = addHueToRGB(fc,animatorProps.fh.v*mult[0]);
-                        } else {
-                            fc = addHueToRGB(fc,animatorProps.fh.v*mult);
-                        }
-                    }
-                    if('fs' in animatorProps){
-                        if(mult.length) {
-                            fc = addSaturationToRGB(fc,animatorProps.fs.v*mult[0]);
-                        } else {
-                            fc = addSaturationToRGB(fc,animatorProps.fs.v*mult);
-                        }
-                    }
-                    if('fb' in animatorProps){
-                        if(mult.length) {
-                            fc = addBrightnessToRGB(fc,animatorProps.fb.v*mult[0]);
-                        } else {
-                            fc = addBrightnessToRGB(fc,animatorProps.fb.v*mult);
-                        }
-                    }
-                }
-            }
-
-            for(j=0;j<jLen;j+=1){
-                animatorProps = renderedData.a[j].a;
-
-                if ('p' in animatorProps) {
-                    animatorSelector = renderedData.a[j].s;
-                    mult = animatorSelector.getMult(letters[i].anIndexes[j],data.t.a[j].s.totalChars);
-                    if(this.maskPath) {
-                        if(mult.length) {
-                            matrixHelper.translate(0, animatorProps.p.v[1] * mult[0], -animatorProps.p.v[2] * mult[1]);
-                        } else {
-                            matrixHelper.translate(0, animatorProps.p.v[1] * mult, -animatorProps.p.v[2] * mult);
-                        }
-                    }else{
-
-                        if(mult.length) {
-                            matrixHelper.translate(animatorProps.p.v[0] * mult[0], animatorProps.p.v[1] * mult[1], -animatorProps.p.v[2] * mult[2]);
-                        } else {
-                            matrixHelper.translate(animatorProps.p.v[0] * mult, animatorProps.p.v[1] * mult, -animatorProps.p.v[2] * mult);
-                        }
-                    }
-                }
-            }
-            if(documentData.strokeWidthAnim){
-                letterSw = sw < 0 ? 0 : sw;
-            }
-            if(documentData.strokeColorAnim){
-                letterSc = 'rgb('+Math.round(sc[0]*255)+','+Math.round(sc[1]*255)+','+Math.round(sc[2]*255)+')';
-            }
-            if(documentData.fillColorAnim){
-                letterFc = 'rgb('+Math.round(fc[0]*255)+','+Math.round(fc[1]*255)+','+Math.round(fc[2]*255)+')';
-            }
-
-            if(this.maskPath) {
-                if (data.t.p.p) {
-                    tanAngle = (currentPoint.point[1] - prevPoint.point[1]) / (currentPoint.point[0] - prevPoint.point[0]);
-                    var rot = Math.atan(tanAngle) * 180 / Math.PI;
-                    if (currentPoint.point[0] < prevPoint.point[0]) {
-                        rot += 180;
-                    }
-                    matrixHelper.rotate(-rot * Math.PI / 180);
-                }
-                matrixHelper.translate(xPathPos, yPathPos, 0);
-                matrixHelper.translate(renderedData.m.a.v[0]*letters[i].an/200, renderedData.m.a.v[1]*yOff/100,0);
-                currentLength -= renderedData.m.a.v[0]*letters[i].an/200;
-                if(letters[i+1] && ind !== letters[i+1].ind){
-                    currentLength += letters[i].an / 2;
-                    currentLength += documentData.tr/1000*documentData.s;
-                }
-            }else{
-
-                matrixHelper.translate(xPos,yPos,0);
-
-                if(documentData.ps){
-                    //matrixHelper.translate(documentData.ps[0],documentData.ps[1],0);
-                    matrixHelper.translate(documentData.ps[0],documentData.ps[1] + documentData.ascent,0);
-                }
-                switch(documentData.j){
-                    case 1:
-                        matrixHelper.translate(documentData.justifyOffset + (documentData.boxWidth - documentData.lineWidths[letters[i].line]),0,0);
-                        break;
-                    case 2:
-                        matrixHelper.translate(documentData.justifyOffset + (documentData.boxWidth - documentData.lineWidths[letters[i].line])/2,0,0);
-                        break;
-                }
-                matrixHelper.translate(offf,0,0);
-                matrixHelper.translate(renderedData.m.a.v[0]*letters[i].an/200,renderedData.m.a.v[1]*yOff/100,0);
-                xPos += letters[i].l + documentData.tr/1000*documentData.s;
-            }
-            if(renderType === 'html'){
-                letterM = matrixHelper.toCSS();
-            }else if(renderType === 'svg'){
-                letterM = matrixHelper.to2dCSS();
-            }else{
-                letterP = [matrixHelper.props[0],matrixHelper.props[1],matrixHelper.props[2],matrixHelper.props[3],matrixHelper.props[4],matrixHelper.props[5],matrixHelper.props[6],matrixHelper.props[7],matrixHelper.props[8],matrixHelper.props[9],matrixHelper.props[10],matrixHelper.props[11],matrixHelper.props[12],matrixHelper.props[13],matrixHelper.props[14],matrixHelper.props[15]];
-            }
-            letterO = elemOpacity;
-
-            lastLetter = this.renderedLetters[i];
-            if(lastLetter && (lastLetter.o !== letterO || lastLetter.sw !== letterSw || lastLetter.sc !== letterSc || lastLetter.fc !== letterFc)){
-                this.lettersChangedFlag = true;
-                letterValue = new LetterProps(letterO,letterSw,letterSc,letterFc,letterM,letterP);
-            }else{
-                if((renderType === 'svg' || renderType === 'html') && (!lastLetter || lastLetter.m !== letterM)){
-                    this.lettersChangedFlag = true;
-                    letterValue = new LetterProps(letterO,letterSw,letterSc,letterFc,letterM);
-                }else if(renderType === 'canvas' && (!lastLetter || (lastLetter.props[0] !== letterP[0] || lastLetter.props[1] !== letterP[1] || lastLetter.props[4] !== letterP[4] || lastLetter.props[5] !== letterP[5] || lastLetter.props[12] !== letterP[12] || lastLetter.props[13] !== letterP[13]))){
-                    this.lettersChangedFlag = true;
-                    letterValue = new LetterProps(letterO,letterSw,letterSc,letterFc,null,letterP);
-                } else {
-                    letterValue = lastLetter;
-                }
-            }
-            this.renderedLetters[i] = letterValue;
-        }
-    }
-};
+ITextElement.prototype.buildShapeString = IShapeElement.prototype.buildShapeString;
 
 ITextElement.prototype.emptyProp = new LetterProps();
 
@@ -5921,8 +7251,8 @@ createElement(SVGBaseElement, SVGTextElement);
 
 SVGTextElement.prototype.init = ITextElement.prototype.init;
 SVGTextElement.prototype.createPathShape = ITextElement.prototype.createPathShape;
-SVGTextElement.prototype.getMeasures = ITextElement.prototype.getMeasures;
 SVGTextElement.prototype.prepareFrame = ITextElement.prototype.prepareFrame;
+SVGTextElement.prototype.buildShapeString = ITextElement.prototype.buildShapeString;
 
 SVGTextElement.prototype.createElements = function(){
 
@@ -5974,6 +7304,7 @@ SVGTextElement.prototype.buildNewText = function(){
     var shapes, shapeStr = '', singleShape = this.data.singleShape;
     if (singleShape) {
         var xPos = 0, yPos = 0, lineWidths = documentData.lineWidths, boxWidth = documentData.boxWidth, firstLine = true;
+        var trackingOffset = documentData.tr/1000*documentData.s;
     }
     var cnt = 0;
     for (i = 0;i < len ;i += 1) {
@@ -5990,7 +7321,7 @@ SVGTextElement.prototype.buildNewText = function(){
         tSpan.setAttribute('stroke-miterlimit','4');
         //tSpan.setAttribute('visibility', 'hidden');
         if(singleShape && letters[i].n) {
-            xPos = 0;
+            xPos = -trackingOffset;
             yPos += documentData.yOffset;
             yPos += firstLine ? 1 : 0;
             firstLine = false;
@@ -6003,12 +7334,13 @@ SVGTextElement.prototype.buildNewText = function(){
             if(documentData.ps){
                 matrixHelper.translate(documentData.ps[0],documentData.ps[1] + documentData.ascent,0);
             }
+            matrixHelper.translate(0,-documentData.ls,0);
             switch(documentData.j){
                 case 1:
                     matrixHelper.translate(documentData.justifyOffset + (boxWidth - lineWidths[letters[i].line]),0,0);
                     break;
                 case 2:
-                    matrixHelper.translate(documentData.justifyOffset + (boxWidth - lineWidths[letters[i].line])/2,0,0);
+                    matrixHelper.translate(documentData.justifyOffset + (boxWidth - lineWidths[letters[i].line] )/2,0,0);
                     break;
             }
             matrixHelper.translate(xPos, yPos, 0);
@@ -6044,8 +7376,8 @@ SVGTextElement.prototype.buildNewText = function(){
             }
         }
         if(singleShape) {
-            xPos += letters[i].l;
-            xPos += documentData.tr/1000*documentData.s;
+            xPos += letters[i].l || 0;
+            xPos += trackingOffset;
         }
         //
         this.textSpans[cnt] = tSpan;
@@ -6061,14 +7393,63 @@ SVGTextElement.prototype.buildNewText = function(){
         tSpan.setAttribute('d',shapeStr);
         this.layerElement.appendChild(tSpan);
     }
+    this._sizeChanged = true;
 }
 
-SVGTextElement.prototype.hide = function(){
-    if(!this.hidden){
-        this.layerElement.style.display = 'none';
-        this.hidden = true;
+SVGTextElement.prototype.sourceRectAtTime = function(time){
+    this.prepareFrame(this.comp.renderedFrame - this.data.st);
+    this.renderLetters();
+    if(this._sizeChanged){
+        this._sizeChanged = false;
+        var textBox = this.layerElement.getBBox();
+        this.bbox = {
+            top: textBox.y,
+            left: textBox.x,
+            width: textBox.width,
+            height: textBox.height
+        }
     }
-};
+    return this.bbox;
+}
+
+SVGTextElement.prototype.renderLetters = function(){
+
+    if(!this.data.singleShape){
+        this.textAnimator.getMeasures(this.currentTextDocumentData, this.lettersChangedFlag);
+        if(this.lettersChangedFlag || this.textAnimator.lettersChangedFlag){
+            this._sizeChanged = true;
+            var  i,len,count=0;
+            var renderedLetters = this.textAnimator.renderedLetters;
+
+            var letters = this.currentTextDocumentData.l;
+
+            len = letters.length;
+            var renderedLetter;
+            for(i=0;i<len;i+=1){
+                if(letters[i].n){
+                    continue;
+                }
+                renderedLetter = renderedLetters[count];
+                count += 1;
+                if(renderedLetter.mdf.m) {
+                    this.textSpans[i].setAttribute('transform',renderedLetter.m);
+                }
+                if(renderedLetter.mdf.o) {
+                    this.textSpans[i].setAttribute('opacity',renderedLetter.o);
+                }
+                if(renderedLetter.mdf.sw){
+                    this.textSpans[i].setAttribute('stroke-width',renderedLetter.sw);
+                }
+                if(renderedLetter.mdf.sc){
+                    this.textSpans[i].setAttribute('stroke',renderedLetter.sc);
+                }
+                if(renderedLetter.mdf.fc){
+                    this.textSpans[i].setAttribute('fill',renderedLetter.fc);
+                }
+            }
+        }
+    }
+}
 
 SVGTextElement.prototype.renderFrame = function(parentMatrix){
 
@@ -6078,44 +7459,12 @@ SVGTextElement.prototype.renderFrame = function(parentMatrix){
         return;
     }
     if(this.hidden){
-        this.hidden = false;
-        this.layerElement.style.display = 'block';
-    }
-
-    if(this.data.singleShape){
-        return;
-    }
-    this.getMeasures();
-    if(!this.lettersChangedFlag){
-        return;
-    }
-    var  i,len;
-    var renderedLetters = this.renderedLetters;
-
-    var letters = this.currentTextDocumentData.l;
-
-    len = letters.length;
-    var renderedLetter;
-    for(i=0;i<len;i+=1){
-        if(letters[i].n){
-            continue;
-        }
-        renderedLetter = renderedLetters[i];
-        this.textSpans[i].setAttribute('transform',renderedLetter.m);
-        this.textSpans[i].setAttribute('opacity',renderedLetter.o);
-        if(renderedLetter.sw){
-            this.textSpans[i].setAttribute('stroke-width',renderedLetter.sw);
-        }
-        if(renderedLetter.sc){
-            this.textSpans[i].setAttribute('stroke',renderedLetter.sc);
-        }
-        if(renderedLetter.fc){
-            this.textSpans[i].setAttribute('fill',renderedLetter.fc);
-        }
+        this.show();
     }
     if(this.firstFrame) {
         this.firstFrame = false;
     }
+    this.renderLetters();
 }
 
 
@@ -6209,7 +7558,7 @@ SVGStrokeEffect.prototype.initialize = function(){
         mask.appendChild(groupPath);
         this.elem.globalData.defs.appendChild(mask);
         var g = document.createElementNS(svgNS,'g');
-        g.setAttribute('mask','url(#'+id+')');
+        g.setAttribute('mask','url(' + locationHref + '#'+id+')');
         if(elemChildren[0]){
             g.appendChild(elemChildren[0]);
         }
@@ -6420,6 +7769,132 @@ SVGProLevelsFilter.prototype.renderFrame = function(forceRender){
         
     }
 };
+function SVGDropShadowEffect(filter, filterManager){
+    /*<feGaussianBlur in="SourceAlpha" stdDeviation="3"/> <!-- stdDeviation is how much to blur -->
+  <feOffset dx="2" dy="2" result="offsetblur"/> <!-- how much to offset -->
+  <feMerge> 
+    <feMergeNode/> <!-- this contains the offset blurred image -->
+    <feMergeNode in="SourceGraphic"/> <!-- this contains the element that the filter is applied to -->
+  </feMerge>*/
+  /*<feFlood flood-color="#3D4574" flood-opacity="0.5" result="offsetColor"/>*/
+    filter.setAttribute('x','-100%');
+    filter.setAttribute('y','-100%');
+    filter.setAttribute('width','400%');
+    filter.setAttribute('height','400%');
+    this.filterManager = filterManager;
+
+    var feGaussianBlur = document.createElementNS(svgNS,'feGaussianBlur');
+    feGaussianBlur.setAttribute('in','SourceAlpha');
+    feGaussianBlur.setAttribute('result','drop_shadow_1');
+    feGaussianBlur.setAttribute('stdDeviation','0');
+    this.feGaussianBlur = feGaussianBlur;
+    filter.appendChild(feGaussianBlur);
+
+    var feOffset = document.createElementNS(svgNS,'feOffset');
+    feOffset.setAttribute('dx','25');
+    feOffset.setAttribute('dy','0');
+    feOffset.setAttribute('in','drop_shadow_1');
+    feOffset.setAttribute('result','drop_shadow_2');
+    this.feOffset = feOffset;
+    filter.appendChild(feOffset);
+    var feFlood = document.createElementNS(svgNS,'feFlood');
+    feFlood.setAttribute('flood-color','#00ff00');
+    feFlood.setAttribute('flood-opacity','1');
+    feFlood.setAttribute('result','drop_shadow_3');
+    this.feFlood = feFlood;
+    filter.appendChild(feFlood);
+
+    var feComposite = document.createElementNS(svgNS,'feComposite');
+    feComposite.setAttribute('in','drop_shadow_3');
+    feComposite.setAttribute('in2','drop_shadow_2');
+    feComposite.setAttribute('operator','in');
+    feComposite.setAttribute('result','drop_shadow_4');
+    filter.appendChild(feComposite);
+
+
+    var feMerge = document.createElementNS(svgNS,'feMerge');
+    filter.appendChild(feMerge);
+    var feMergeNode;
+    feMergeNode = document.createElementNS(svgNS,'feMergeNode');
+    feMerge.appendChild(feMergeNode);
+    feMergeNode = document.createElementNS(svgNS,'feMergeNode');
+    feMergeNode.setAttribute('in','SourceGraphic');
+    this.feMergeNode = feMergeNode;
+    this.feMerge = feMerge;
+    this.originalNodeAdded = false;
+    feMerge.appendChild(feMergeNode);
+}
+
+SVGDropShadowEffect.prototype.renderFrame = function(forceRender){
+    if(forceRender || this.filterManager.mdf){
+        if(forceRender || this.filterManager.effectElements[4].p.mdf){
+            this.feGaussianBlur.setAttribute('stdDeviation', this.filterManager.effectElements[4].p.v / 4);
+        }
+        if(forceRender || this.filterManager.effectElements[0].p.mdf){
+            var col = this.filterManager.effectElements[0].p.v;
+            this.feFlood.setAttribute('flood-color',rgbToHex(Math.round(col[0]*255),Math.round(col[1]*255),Math.round(col[2]*255)));
+        }
+        if(forceRender || this.filterManager.effectElements[1].p.mdf){
+            this.feFlood.setAttribute('flood-opacity',this.filterManager.effectElements[1].p.v/255);
+        }
+        if(forceRender || this.filterManager.effectElements[2].p.mdf || this.filterManager.effectElements[3].p.mdf){
+            var distance = this.filterManager.effectElements[3].p.v
+            var angle = (this.filterManager.effectElements[2].p.v - 90) * degToRads
+            var x = distance * Math.cos(angle)
+            var y = distance * Math.sin(angle)
+            this.feOffset.setAttribute('dx', x);
+            this.feOffset.setAttribute('dy', y);
+        }
+        /*if(forceRender || this.filterManager.effectElements[5].p.mdf){
+            if(this.filterManager.effectElements[5].p.v === 1 && this.originalNodeAdded) {
+                this.feMerge.removeChild(this.feMergeNode);
+                this.originalNodeAdded = false;
+            } else if(this.filterManager.effectElements[5].p.v === 0 && !this.originalNodeAdded) {
+                this.feMerge.appendChild(this.feMergeNode);
+                this.originalNodeAdded = true;
+            }
+        }*/
+    }
+};
+function SVGMatte3Effect(filterElem, filterManager, elem){
+    this.initialized = false;
+    this.filterManager = filterManager;
+    this.filterElem = filterElem;
+    this.elem = elem;
+    elem.matteElement = document.createElementNS(svgNS,'g');
+    elem.matteElement.appendChild(elem.layerElement);
+    elem.matteElement.appendChild(elem.transformedElement);
+    elem.baseElement = elem.matteElement;
+}
+
+SVGMatte3Effect.prototype.setElementAsMask = function(elem, mask) {
+    var masker = document.createElementNS(svgNS,'mask');
+    masker.setAttribute('id',mask.layerId);
+    masker.setAttribute('mask-type','alpha');
+    masker.appendChild(mask.layerElement);
+    elem.setMatte(mask.layerId);
+    mask.data.hd = false;
+    var defs = elem.globalData.defs;
+    defs.appendChild(masker);
+}
+
+SVGMatte3Effect.prototype.initialize = function() {
+    var ind = this.filterManager.effectElements[0].p.v;
+    var i = 0, len = this.elem.comp.elements.length;
+    while(i < len) {
+    	if(this.elem.comp.elements[i].data.ind === ind) {
+    		this.setElementAsMask(this.elem, this.elem.comp.elements[i]);
+    	}
+    	i += 1;
+    }
+    this.initialized = true;
+}
+
+SVGMatte3Effect.prototype.renderFrame = function() {
+	if(!this.initialized) {
+		this.initialize();
+	}
+}
 function SVGEffects(elem){
     var i, len = elem.data.ef.length;
     var filId = randomString(10);
@@ -6447,11 +7922,19 @@ function SVGEffects(elem){
             count += 1;
             filterManager = new SVGProLevelsFilter(fil, elem.effects.effectElements[i]);
             this.filters.push(filterManager);
+        }else if(elem.data.ef[i].ty === 25){
+            count += 1;
+            filterManager = new SVGDropShadowEffect(fil, elem.effects.effectElements[i]);
+            this.filters.push(filterManager);
+        }else if(elem.data.ef[i].ty === 28){
+            //count += 1;
+            filterManager = new SVGMatte3Effect(fil, elem.effects.effectElements[i], elem);
+            this.filters.push(filterManager);
         }
     }
     if(count){
         elem.globalData.defs.appendChild(fil);
-        elem.layerElement.setAttribute('filter','url(#'+filId+')');
+        elem.layerElement.setAttribute('filter','url(' + locationHref + '#'+filId+')');
     }
 }
 
@@ -6482,13 +7965,13 @@ createElement(SVGBaseElement, ICompElement);
 
 ICompElement.prototype.hide = function(){
     if(!this.hidden){
+        this._parent.hide.call(this);
         var i,len = this.elements.length;
         for( i = 0; i < len; i+=1 ){
             if(this.elements[i]){
                 this.elements[i].hide();
             }
         }
-        this.hidden = true;
     }
 };
 
@@ -6526,7 +8009,9 @@ ICompElement.prototype.renderFrame = function(parentMatrix){
         return;
     }
 
-    this.hidden = false;
+    if(this.hidden) {
+        this.show();
+    }
     for( i = 0; i < len; i+=1 ){
         if(this.completeLayers || this.elements[i]){
             this.elements[i].renderFrame();
@@ -6597,13 +8082,6 @@ IImageElement.prototype.createElements = function(){
 
 };
 
-IImageElement.prototype.hide = function(){
-    if(!this.hidden){
-        this.layerElement.style.display = 'none';
-        this.hidden = true;
-    }
-};
-
 IImageElement.prototype.renderFrame = function(parentMatrix){
     var renderParent = this._parent.renderFrame.call(this,parentMatrix);
     if(renderParent===false){
@@ -6611,8 +8089,7 @@ IImageElement.prototype.renderFrame = function(parentMatrix){
         return;
     }
     if(this.hidden){
-        this.hidden = false;
-        this.layerElement.style.display = 'block';
+        this.show();
     }
     if(this.firstFrame){
         this.firstFrame = false;
@@ -6623,570 +8100,6 @@ IImageElement.prototype.destroy = function(){
     this._parent.destroy.call(this._parent);
     this.innerElem =  null;
 };
-function IShapeElement(data,parentContainer,globalData,comp, placeholder){
-    this.shapes = [];
-    this.shapesData = data.shapes;
-    this.stylesList = [];
-    this.viewData = [];
-    this.shapeModifiers = [];
-    this._parent.constructor.call(this,data,parentContainer,globalData,comp, placeholder);
-}
-createElement(SVGBaseElement, IShapeElement);
-
-IShapeElement.prototype.lcEnum = {
-    '1': 'butt',
-    '2': 'round',
-    '3': 'butt'
-}
-
-IShapeElement.prototype.ljEnum = {
-    '1': 'miter',
-    '2': 'round',
-    '3': 'butt'
-}
-
-IShapeElement.prototype.buildExpressionInterface = function(){};
-
-IShapeElement.prototype.createElements = function(){
-    //TODO check if I can use symbol so i can set its viewBox
-    this._parent.createElements.call(this);
-    this.searchShapes(this.shapesData,this.viewData,this.layerElement,this.dynamicProperties, 0);
-    if(!this.data.hd || this.data.td){
-        styleUnselectableDiv(this.layerElement);
-    }
-    //this.elemInterface.registerShapeExpressionInterface(ShapeExpressionInterface.createShapeInterface(this.shapesData,this.viewData,this.elemInterface));
-};
-
-IShapeElement.prototype.setGradientData = function(pathElement,arr,data){
-
-    var gradientId = 'gr_'+randomString(10);
-    var gfill;
-    if(arr.t === 1){
-        gfill = document.createElementNS(svgNS,'linearGradient');
-    } else {
-        gfill = document.createElementNS(svgNS,'radialGradient');
-    }
-    gfill.setAttribute('id',gradientId);
-    gfill.setAttribute('spreadMethod','pad');
-    gfill.setAttribute('gradientUnits','userSpaceOnUse');
-    var stops = [];
-    var stop, j, jLen;
-    jLen = arr.g.p*4;
-    for(j=0;j<jLen;j+=4){
-        stop = document.createElementNS(svgNS,'stop');
-        gfill.appendChild(stop);
-        stops.push(stop);
-    }
-    pathElement.setAttribute( arr.ty === 'gf' ? 'fill':'stroke','url(#'+gradientId+')');
-    this.globalData.defs.appendChild(gfill);
-    data.gf = gfill;
-    data.cst = stops;
-}
-
-IShapeElement.prototype.setGradientOpacity = function(arr, data, styleOb){
-    if((arr.g.k.k[0].s && arr.g.k.k[0].s.length > arr.g.p*4) || arr.g.k.k.length > arr.g.p*4){
-        var opFill;
-        var stop, j, jLen;
-        var mask = document.createElementNS(svgNS,"mask");
-        var maskElement = document.createElementNS(svgNS, 'path');
-        mask.appendChild(maskElement);
-        var opacityId = 'op_'+randomString(10);
-        var maskId = 'mk_'+randomString(10);
-        mask.setAttribute('id',maskId);
-        if(arr.t === 1){
-            opFill = document.createElementNS(svgNS,'linearGradient');
-        } else {
-            opFill = document.createElementNS(svgNS,'radialGradient');
-        }
-        opFill.setAttribute('id',opacityId);
-        opFill.setAttribute('spreadMethod','pad');
-        opFill.setAttribute('gradientUnits','userSpaceOnUse');
-        jLen = arr.g.k.k[0].s ? arr.g.k.k[0].s.length : arr.g.k.k.length;
-        var stops = [];
-        for(j=arr.g.p*4;j<jLen;j+=2){
-            stop = document.createElementNS(svgNS,'stop');
-            stop.setAttribute('stop-color','rgb(255,255,255)');
-            //stop.setAttribute('offset',Math.round(arr.y[j][0]*100)+'%');
-            //stop.setAttribute('style','stop-color:rgb(255,255,255);stop-opacity:'+arr.y[j][1]);
-            opFill.appendChild(stop);
-            stops.push(stop);
-        }
-        maskElement.setAttribute( arr.ty === 'gf' ? 'fill':'stroke','url(#'+opacityId+')');
-        this.globalData.defs.appendChild(opFill);
-        this.globalData.defs.appendChild(mask);
-        data.of = opFill;
-        data.ost = stops;
-        styleOb.msElem = maskElement;
-        return maskId;
-    }
-};
-
-IShapeElement.prototype.searchShapes = function(arr,data,container,dynamicProperties, level, transformers){
-    transformers = transformers || [];
-    var ownTransformers = [].concat(transformers);
-    var i, len = arr.length - 1;
-    var j, jLen;
-    var ownArrays = [], ownModifiers = [], styleOb, currentTransform;
-    for(i=len;i>=0;i-=1){
-        if(arr[i].ty == 'fl' || arr[i].ty == 'st' || arr[i].ty == 'gf' || arr[i].ty == 'gs'){
-            data[i] = {};
-            styleOb = {
-                type: arr[i].ty,
-                d: '',
-                ld: '',
-                lvl: level,
-                mdf: false
-            };
-            var pathElement = document.createElementNS(svgNS, "path");
-            data[i].o = PropertyFactory.getProp(this,arr[i].o,0,0.01,dynamicProperties);
-            if(arr[i].ty == 'st' || arr[i].ty == 'gs') {
-                pathElement.setAttribute('stroke-linecap', this.lcEnum[arr[i].lc] || 'round');
-                ////pathElement.style.strokeLinecap = this.lcEnum[arr[i].lc] || 'round';
-                pathElement.setAttribute('stroke-linejoin',this.ljEnum[arr[i].lj] || 'round');
-                ////pathElement.style.strokeLinejoin = this.ljEnum[arr[i].lj] || 'round';
-                pathElement.setAttribute('fill-opacity','0');
-                ////pathElement.style.fillOpacity = 0;
-                if(arr[i].lj == 1) {
-                    pathElement.setAttribute('stroke-miterlimit',arr[i].ml);
-                    ////pathElement.style.strokeMiterlimit = arr[i].ml;
-                }
-
-                data[i].w = PropertyFactory.getProp(this,arr[i].w,0,null,dynamicProperties);
-                if(arr[i].d){
-                    var d = PropertyFactory.getDashProp(this,arr[i].d,'svg',dynamicProperties);
-                    if(!d.k){
-                        pathElement.setAttribute('stroke-dasharray', d.dasharray);
-                        ////pathElement.style.strokeDasharray = d.dasharray;
-                        pathElement.setAttribute('stroke-dashoffset', d.dashoffset);
-                        ////pathElement.style.strokeDashoffset = d.dashoffset;
-                    }
-                    data[i].d = d;
-                }
-
-            }
-            if(arr[i].ty == 'fl' || arr[i].ty == 'st'){
-                data[i].c = PropertyFactory.getProp(this,arr[i].c,1,255,dynamicProperties);
-                container.appendChild(pathElement);
-            } else {
-                data[i].g = PropertyFactory.getGradientProp(this,arr[i].g,dynamicProperties);
-                if(arr[i].t == 2){
-                    data[i].h = PropertyFactory.getProp(this,arr[i].h,1,0.01,dynamicProperties);
-                    data[i].a = PropertyFactory.getProp(this,arr[i].a,1,degToRads,dynamicProperties);
-                }
-                data[i].s = PropertyFactory.getProp(this,arr[i].s,1,null,dynamicProperties);
-                data[i].e = PropertyFactory.getProp(this,arr[i].e,1,null,dynamicProperties);
-                this.setGradientData(pathElement,arr[i],data[i], styleOb);
-                var maskId = this.setGradientOpacity(arr[i],data[i], styleOb);
-                if(maskId){
-                    pathElement.setAttribute('mask','url(#'+maskId+')');
-                }
-                data[i].elem = pathElement;
-                container.appendChild(pathElement);
-            }
-            if(arr[i].r === 2) {
-                pathElement.setAttribute('fill-rule', 'evenodd');
-            }
-
-            if(arr[i].ln){
-                pathElement.setAttribute('id',arr[i].ln);
-            }
-            if(arr[i].cl){
-                pathElement.setAttribute('class',arr[i].cl);
-            }
-            styleOb.pElem = pathElement;
-            this.stylesList.push(styleOb);
-            data[i].style = styleOb;
-            ownArrays.push(styleOb);
-        }else if(arr[i].ty == 'gr'){
-            data[i] = {
-                it: []
-            };
-            var g = document.createElementNS(svgNS,'g');
-            container.appendChild(g);
-            data[i].gr = g;
-            this.searchShapes(arr[i].it,data[i].it,g,dynamicProperties, level + 1, transformers);
-        }else if(arr[i].ty == 'tr'){
-            data[i] = {
-                transform : {
-                    op: PropertyFactory.getProp(this,arr[i].o,0,0.01,dynamicProperties),
-                    mProps: PropertyFactory.getProp(this,arr[i],2,null,dynamicProperties)
-                },
-                elements: []
-            };
-            currentTransform = data[i].transform;
-            ownTransformers.push(currentTransform);
-        }else if(arr[i].ty == 'sh' || arr[i].ty == 'rc' || arr[i].ty == 'el' || arr[i].ty == 'sr'){
-            data[i] = {
-                elements : [],
-                caches:[],
-                styles : [],
-                transformers: ownTransformers,
-                lStr: ''
-            };
-            var ty = 4;
-            if(arr[i].ty == 'rc'){
-                ty = 5;
-            }else if(arr[i].ty == 'el'){
-                ty = 6;
-            }else if(arr[i].ty == 'sr'){
-                ty = 7;
-            }
-            data[i].sh = ShapePropertyFactory.getShapeProp(this,arr[i],ty,dynamicProperties);
-            data[i].lvl = level;
-            this.shapes.push(data[i].sh);
-            this.addShapeToModifiers(data[i].sh);
-            jLen = this.stylesList.length;
-            for(j=0;j<jLen;j+=1){
-                if(!this.stylesList[j].closed){
-                    data[i].elements.push({
-                        ty:this.stylesList[j].type,
-                        st: this.stylesList[j]
-                    });
-                }
-            }
-        }else if(arr[i].ty == 'tm' || arr[i].ty == 'rd' || arr[i].ty == 'ms'){
-            var modifier = ShapeModifiers.getModifier(arr[i].ty);
-            modifier.init(this,arr[i],dynamicProperties);
-            this.shapeModifiers.push(modifier);
-            ownModifiers.push(modifier);
-            data[i] = modifier;
-        }
-    }
-    len = ownArrays.length;
-    for(i=0;i<len;i+=1){
-        ownArrays[i].closed = true;
-    }
-    len = ownModifiers.length;
-    for(i=0;i<len;i+=1){
-        ownModifiers[i].closed = true;
-    }
-};
-
-IShapeElement.prototype.addShapeToModifiers = function(shape) {
-    var i, len = this.shapeModifiers.length;
-    for(i=0;i<len;i+=1){
-        this.shapeModifiers[i].addShape(shape);
-    }
-};
-
-IShapeElement.prototype.renderModifiers = function() {
-    if(!this.shapeModifiers.length){
-        return;
-    }
-    var i, len = this.shapes.length;
-    for(i=0;i<len;i+=1){
-        this.shapes[i].reset();
-    }
-
-
-    len = this.shapeModifiers.length;
-
-    for(i=len-1;i>=0;i-=1){
-        this.shapeModifiers[i].processShapes(this.firstFrame);
-    }
-};
-
-IShapeElement.prototype.renderFrame = function(parentMatrix){
-    var renderParent = this._parent.renderFrame.call(this,parentMatrix);
-    if(renderParent===false){
-        this.hide();
-        return;
-    }
-    this.globalToLocal([0,0,0]);
-    if(this.hidden){
-        this.layerElement.style.display = 'block';
-        this.hidden = false;
-    }
-    this.renderModifiers();
-    this.renderShape(null,null,true, null);
-};
-
-IShapeElement.prototype.hide = function(){
-    if(!this.hidden){
-        this.layerElement.style.display = 'none';
-        var i, len = this.stylesList.length;
-        for(i=len-1;i>=0;i-=1){
-            if(this.stylesList[i].ld !== '0'){
-                this.stylesList[i].ld = '0';
-                this.stylesList[i].pElem.style.display = 'none';
-                if(this.stylesList[i].pElem.parentNode){
-                    this.stylesList[i].parent = this.stylesList[i].pElem.parentNode;
-                    //this.stylesList[i].pElem.parentNode.removeChild(this.stylesList[i].pElem);
-                }
-            }
-        }
-        this.hidden = true;
-    }
-};
-
-IShapeElement.prototype.renderShape = function(items,data,isMain, container){
-    var i, len;
-    if(!items){
-        items = this.shapesData;
-        len = this.stylesList.length;
-        for(i=0;i<len;i+=1){
-            this.stylesList[i].d = '';
-            this.stylesList[i].mdf = false;
-        }
-    }
-    if(!data){
-        data = this.viewData;
-    }
-    ///
-    ///
-    len = items.length - 1;
-    var ty;
-    for(i=len;i>=0;i-=1){
-        ty = items[i].ty;
-        if(ty == 'tr'){
-            if(this.firstFrame || data[i].transform.op.mdf && container){
-                container.setAttribute('opacity',data[i].transform.op.v);
-            }
-            if(this.firstFrame || data[i].transform.mProps.mdf && container){
-                container.setAttribute('transform',data[i].transform.mProps.v.to2dCSS());
-            }
-        }else if(ty == 'sh' || ty == 'el' || ty == 'rc' || ty == 'sr'){
-            this.renderPath(items[i],data[i]);
-        }else if(ty == 'fl'){
-            this.renderFill(items[i],data[i]);
-        }else if(ty == 'gf'){
-            this.renderGradient(items[i],data[i]);
-        }else if(ty == 'gs'){
-            this.renderGradient(items[i],data[i]);
-            this.renderStroke(items[i],data[i]);
-        }else if(ty == 'st'){
-            this.renderStroke(items[i],data[i]);
-        }else if(ty == 'gr'){
-            this.renderShape(items[i].it,data[i].it,false, data[i].gr);
-        }else if(ty == 'tm'){
-            //
-        }
-    }
-    if(isMain) {
-        len = this.stylesList.length;
-        for (i = 0; i < len; i += 1) {
-            if (this.stylesList[i].ld === '0') {
-                this.stylesList[i].ld = '1';
-                this.stylesList[i].pElem.style.display = 'block';
-                //this.stylesList[i].parent.appendChild(this.stylesList[i].pElem);
-            }
-            if (this.stylesList[i].mdf || this.firstFrame) {
-                this.stylesList[i].pElem.setAttribute('d', this.stylesList[i].d);
-                if(this.stylesList[i].msElem){
-                    this.stylesList[i].msElem.setAttribute('d', this.stylesList[i].d);
-                }
-            }
-        }
-        if (this.firstFrame) {
-            this.firstFrame = false;
-        }
-    }
-
-};
-
-IShapeElement.prototype.renderPath = function(pathData,viewData){
-    var len, i, j, jLen,pathStringTransformed,redraw,pathNodes,l, lLen = viewData.elements.length;
-    var lvl = viewData.lvl;
-    for(l=0;l<lLen;l+=1){
-        redraw = viewData.sh.mdf || this.firstFrame;
-        pathStringTransformed = '';
-        var paths = viewData.sh.paths;
-        jLen = paths.length;
-        if(viewData.elements[l].st.lvl < lvl){
-            var mat = this.mHelper.reset(), props;
-            var k;
-            for(k=viewData.transformers.length-1;k>=0;k-=1){
-                redraw = viewData.transformers[k].mProps.mdf || redraw;
-                props = viewData.transformers[k].mProps.v.props;
-                mat.transform(props[0],props[1],props[2],props[3],props[4],props[5],props[6],props[7],props[8],props[9],props[10],props[11],props[12],props[13],props[14],props[15]);
-            }
-            if(redraw){
-                for(j=0;j<jLen;j+=1){
-                    pathNodes = paths[j];
-                    if(pathNodes && pathNodes.v){
-                        len = pathNodes.v.length;
-                        for (i = 1; i < len; i += 1) {
-                            if (i == 1) {
-                                pathStringTransformed += " M" + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                            }
-                            pathStringTransformed += " C" + mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + mat.applyToPointStringified(pathNodes.i[i][0], pathNodes.i[i][1]) + " " + mat.applyToPointStringified(pathNodes.v[i][0], pathNodes.v[i][1]);
-                        }
-                        if (len == 1) {
-                            pathStringTransformed += " M" + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                        }
-                        if (pathNodes.c) {
-                            pathStringTransformed += " C" + mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + mat.applyToPointStringified(pathNodes.i[0][0], pathNodes.i[0][1]) + " " + mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                            pathStringTransformed += 'z';
-                        }
-                    }
-                }
-                viewData.caches[l] = pathStringTransformed;
-            } else {
-                pathStringTransformed = viewData.caches[l];
-            }
-        } else {
-            if(redraw){
-                for(j=0;j<jLen;j+=1){
-                    pathNodes = paths[j];
-                    if(pathNodes && pathNodes.v){
-                        len = pathNodes.v.length;
-                        for (i = 1; i < len; i += 1) {
-                            if (i == 1) {
-                                //pathStringTransformed += " M" + groupTransform.mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                                pathStringTransformed += " M" + pathNodes.v[0].join(',');
-                            }
-                            //pathStringTransformed += " C" + groupTransform.mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + groupTransform.mat.applyToPointStringified(pathNodes.i[i][0], pathNodes.i[i][1]) + " " + groupTransform.mat.applyToPointStringified(pathNodes.v[i][0], pathNodes.v[i][1]);
-                            pathStringTransformed += " C" + pathNodes.o[i - 1].join(',') + " " + pathNodes.i[i].join(',') + " " + pathNodes.v[i].join(',');
-                        }
-                        if (len == 1) {
-                            //pathStringTransformed += " M" + groupTransform.mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                            pathStringTransformed += " M" + pathNodes.v[0].join(',');
-                        }
-                        if (pathNodes.c && len) {
-                            //pathStringTransformed += " C" + groupTransform.mat.applyToPointStringified(pathNodes.o[i - 1][0], pathNodes.o[i - 1][1]) + " " + groupTransform.mat.applyToPointStringified(pathNodes.i[0][0], pathNodes.i[0][1]) + " " + groupTransform.mat.applyToPointStringified(pathNodes.v[0][0], pathNodes.v[0][1]);
-                            pathStringTransformed += " C" + pathNodes.o[i - 1].join(',') + " " + pathNodes.i[0].join(',') + " " + pathNodes.v[0].join(',');
-                            pathStringTransformed += 'z';
-                        }
-                    }
-                }
-                viewData.caches[l] = pathStringTransformed;
-            } else {
-                pathStringTransformed = viewData.caches[l];
-            }
-        }
-        viewData.elements[l].st.d += pathStringTransformed;
-        viewData.elements[l].st.mdf = redraw || viewData.elements[l].st.mdf;
-    }
-
-};
-
-IShapeElement.prototype.renderFill = function(styleData,viewData){
-    var styleElem = viewData.style;
-
-    if(viewData.c.mdf || this.firstFrame){
-        styleElem.pElem.setAttribute('fill','rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')');
-        ////styleElem.pElem.style.fill = 'rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')';
-    }
-    if(viewData.o.mdf || this.firstFrame){
-        styleElem.pElem.setAttribute('fill-opacity',viewData.o.v);
-    }
-};
-
-IShapeElement.prototype.renderGradient = function(styleData,viewData){
-    var gfill = viewData.gf;
-    var opFill = viewData.of;
-    var pt1 = viewData.s.v,pt2 = viewData.e.v;
-
-    if(viewData.o.mdf || this.firstFrame){
-        var attr = styleData.ty === 'gf' ? 'fill-opacity':'stroke-opacity';
-        viewData.elem.setAttribute(attr,viewData.o.v);
-    }
-    //clippedElement.setAttribute('transform','matrix(1,0,0,1,-100,0)');
-    if(viewData.s.mdf || this.firstFrame){
-        var attr1 = styleData.t === 1 ? 'x1':'cx';
-        var attr2 = attr1 === 'x1' ? 'y1':'cy';
-        gfill.setAttribute(attr1,pt1[0]);
-        gfill.setAttribute(attr2,pt1[1]);
-        if(opFill){
-            opFill.setAttribute(attr1,pt1[0]);
-            opFill.setAttribute(attr2,pt1[1]);
-        }
-    }
-    var stops, i, len, stop;
-    if(viewData.g.cmdf || this.firstFrame){
-        stops = viewData.cst;
-        var cValues = viewData.g.c;
-        len = stops.length;
-        for(i=0;i<len;i+=1){
-            stop = stops[i];
-            stop.setAttribute('offset',cValues[i*4]+'%');
-            stop.setAttribute('stop-color','rgb('+cValues[i*4+1]+','+cValues[i*4+2]+','+cValues[i*4+3]+')');
-        }
-    }
-    if(opFill && (viewData.g.omdf || this.firstFrame)){
-        stops = viewData.ost;
-        var oValues = viewData.g.o;
-        len = stops.length;
-        for(i=0;i<len;i+=1){
-            stop = stops[i];
-            stop.setAttribute('offset',oValues[i*2]+'%');
-            stop.setAttribute('stop-opacity',oValues[i*2+1]);
-        }
-    }
-    if(styleData.t === 1){
-        if(viewData.e.mdf  || this.firstFrame){
-            gfill.setAttribute('x2',pt2[0]);
-            gfill.setAttribute('y2',pt2[1]);
-            if(opFill){
-                opFill.setAttribute('x2',pt2[0]);
-                opFill.setAttribute('y2',pt2[1]);
-            }
-        }
-    } else {
-        var rad;
-        if(viewData.s.mdf || viewData.e.mdf || this.firstFrame){
-            rad = Math.sqrt(Math.pow(pt1[0]-pt2[0],2)+Math.pow(pt1[1]-pt2[1],2));
-            gfill.setAttribute('r',rad);
-            if(opFill){
-                opFill.setAttribute('r',rad);
-            }
-        }
-        if(viewData.e.mdf || viewData.h.mdf || viewData.a.mdf || this.firstFrame){
-            if(!rad){
-                rad = Math.sqrt(Math.pow(pt1[0]-pt2[0],2)+Math.pow(pt1[1]-pt2[1],2));
-            }
-            var ang = Math.atan2(pt2[1]-pt1[1], pt2[0]-pt1[0]);
-
-            var percent = viewData.h.v >= 1 ? 0.99 : viewData.h.v <= -1 ? -0.99:viewData.h.v;
-            var dist = rad*percent;
-            var x = Math.cos(ang + viewData.a.v)*dist + pt1[0];
-            var y = Math.sin(ang + viewData.a.v)*dist + pt1[1];
-            gfill.setAttribute('fx',x);
-            gfill.setAttribute('fy',y);
-            if(opFill){
-                opFill.setAttribute('fx',x);
-                opFill.setAttribute('fy',y);
-            }
-        }
-        //gfill.setAttribute('fy','200');
-    }
-};
-
-IShapeElement.prototype.renderStroke = function(styleData,viewData){
-    var styleElem = viewData.style;
-    //TODO fix dashes
-    var d = viewData.d;
-    var dasharray,dashoffset;
-    if(d && d.k && (d.mdf || this.firstFrame)){
-        styleElem.pElem.setAttribute('stroke-dasharray', d.dasharray);
-        ////styleElem.pElem.style.strokeDasharray = d.dasharray;
-        styleElem.pElem.setAttribute('stroke-dashoffset', d.dashoffset);
-        ////styleElem.pElem.style.strokeDashoffset = d.dashoffset;
-    }
-    if(viewData.c && (viewData.c.mdf || this.firstFrame)){
-        styleElem.pElem.setAttribute('stroke','rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')');
-        ////styleElem.pElem.style.stroke = 'rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')';
-    }
-    if(viewData.o.mdf || this.firstFrame){
-        styleElem.pElem.setAttribute('stroke-opacity',viewData.o.v);
-    }
-    if(viewData.w.mdf || this.firstFrame){
-        styleElem.pElem.setAttribute('stroke-width',viewData.w.v);
-        if(styleElem.msElem){
-            styleElem.msElem.setAttribute('stroke-width',viewData.w.v);
-        }
-        ////styleElem.pElem.style.strokeWidth = viewData.w.v;
-    }
-};
-
-IShapeElement.prototype.destroy = function(){
-    this._parent.destroy.call(this._parent);
-    this.shapeData = null;
-    this.viewData = null;
-    this.parentContainer = null;
-    this.placeholder = null;
-};
-
 function ISolidElement(data,parentContainer,globalData,comp, placeholder){
     this._parent.constructor.call(this,data,parentContainer,globalData,comp, placeholder);
 }
@@ -7212,7 +8125,6 @@ ISolidElement.prototype.createElements = function(){
     }
 };
 
-ISolidElement.prototype.hide = IImageElement.prototype.hide;
 ISolidElement.prototype.renderFrame = IImageElement.prototype.renderFrame;
 ISolidElement.prototype.destroy = IImageElement.prototype.destroy;
 
@@ -8236,6 +9148,7 @@ CanvasRenderer.prototype.configAnimation = function(animData){
     }else{
         this.canvasContext = this.renderConfig.context;
     }
+    this.data = animData;
     this.globalData.canvasContext = this.canvasContext;
     this.globalData.renderer = this;
     this.globalData.isDashed = false;
@@ -8458,31 +9371,32 @@ HybridRenderer.prototype.checkPendingElements  = function(){
 };
 
 HybridRenderer.prototype.appendElementInPos = function(element, pos){
-    var newElement = element.getBaseElement();
-    if(!newElement){
+    var newDOMElement = element.getBaseElement();
+    if(!newDOMElement){
         return;
     }
     var layer = this.layers[pos];
     if(!layer.ddd || !this.supports3d){
         var i = 0;
-        var nextElement;
+        var nextDOMElement, nextLayer;
         while(i<pos){
             if(this.elements[i] && this.elements[i]!== true && this.elements[i].getBaseElement){
-                nextElement = this.elements[i].getBaseElement();
+                nextLayer = this.elements[i];
+                nextDOMElement = this.layers[i].ddd ? this.getThreeDContainerByPos(i) : nextLayer.getBaseElement();
             }
             i += 1;
         }
-        if(nextElement){
+        if(nextDOMElement){
             if(!layer.ddd || !this.supports3d){
-                this.layerElement.insertBefore(newElement, nextElement);
+                this.layerElement.insertBefore(newDOMElement, nextDOMElement);
             }
         } else {
             if(!layer.ddd || !this.supports3d){
-                this.layerElement.appendChild(newElement);
+                this.layerElement.appendChild(newDOMElement);
             }
         }
     } else {
-        this.addTo3dContainer(newElement,pos);
+        this.addTo3dContainer(newDOMElement,pos);
     }
 };
 
@@ -8532,7 +9446,17 @@ HybridRenderer.prototype.createSolid = function (data) {
     return new HSolidElement(data, this.layerElement,this.globalData,this);
 };
 
-HybridRenderer.prototype.getThreeDContainer = function(pos){
+HybridRenderer.prototype.getThreeDContainerByPos = function(pos){
+    var i = 0, len = this.threeDElements.length;
+    while(i<len) {
+        if(this.threeDElements[i].startPos <= pos && this.threeDElements[i].endPos >= pos) {
+            return this.threeDElements[i].perspectiveElem;
+        }
+        i += 1;
+    }
+}
+
+HybridRenderer.prototype.createThreeDContainer = function(pos){
     var perspectiveElem = document.createElement('div');
     styleDiv(perspectiveElem);
     perspectiveElem.style.width = this.globalData.compSize.w+'px';
@@ -8559,7 +9483,7 @@ HybridRenderer.prototype.build3dContainers = function(){
     for(i=0;i<len;i+=1){
         if(this.layers[i].ddd){
             if(!lastThreeDContainerData){
-                lastThreeDContainerData = this.getThreeDContainer(i);
+                lastThreeDContainerData = this.createThreeDContainer(i);
             }
             lastThreeDContainerData.endPos = Math.max(lastThreeDContainerData.endPos,i);
         } else {
@@ -8610,6 +9534,7 @@ HybridRenderer.prototype.configAnimation = function(animData){
     var defs = document.createElementNS(svgNS,'defs');
     svg.appendChild(defs);
     this.globalData.defs = defs;
+    this.data = animData;
     //Mask animation
     this.globalData.getAssetData = this.animationItem.getAssetData.bind(this.animationItem);
     this.globalData.getAssetsPath = this.animationItem.getAssetsPath.bind(this.animationItem);
@@ -9128,7 +10053,7 @@ CVMaskElement.prototype.renderFrame = function (transform) {
         data = this.viewData[i].v;
         pt = transform ? transform.applyToPointArray(data.v[0][0],data.v[0][1],0):data.v[0];
         ctx.moveTo(pt[0], pt[1]);
-        var j, jLen = data.v.length;
+        var j, jLen = data._length;
         for (j = 1; j < jLen; j++) {
             pt = transform ? transform.applyToPointArray(data.o[j - 1][0],data.o[j - 1][1],0) : data.o[j - 1];
             pt2 = transform ? transform.applyToPointArray(data.i[j][0],data.i[j][1],0) : data.i[j];
@@ -9162,26 +10087,16 @@ CVMaskElement.prototype.destroy = function(){
 };
 function CVShapeElement(data, comp,globalData){
     this.shapes = [];
-    this.stylesList = [];
-    this.viewData = [];
-    this.shapeModifiers = [];
     this.shapesData = data.shapes;
-    this.firstFrame = true;
+    this.stylesList = [];
+    this.itemsData = [];
+    this.prevViewData = [];
+    this.shapeModifiers = [];
+    this.processedElements = [];
     this._parent.constructor.call(this,data, comp,globalData);
 }
 createElement(CVBaseElement, CVShapeElement);
 
-CVShapeElement.prototype.lcEnum = {
-    '1': 'butt',
-    '2': 'round',
-    '3': 'butt'
-}
-
-CVShapeElement.prototype.ljEnum = {
-    '1': 'miter',
-    '2': 'round',
-    '3': 'butt'
-};
 CVShapeElement.prototype.transformHelper = {opacity:1,mat:new Matrix(),matMdf:false,opMdf:false};
 
 CVShapeElement.prototype.dashResetter = [];
@@ -9189,107 +10104,185 @@ CVShapeElement.prototype.dashResetter = [];
 CVShapeElement.prototype.createElements = function(){
 
     this._parent.createElements.call(this);
-    this.searchShapes(this.shapesData,this.viewData,this.dynamicProperties);
+    this.searchShapes(this.shapesData,this.itemsData,this.prevViewData,this.dynamicProperties, true);
 };
-CVShapeElement.prototype.searchShapes = function(arr,data,dynamicProperties){
+
+CVShapeElement.prototype.createStyleElement = function(data, dynamicProperties){
+    var styleElem = {
+        data: data,
+        type: data.ty,
+        elements: []
+    };
+    var elementData = {};
+    if(data.ty == 'fl' || data.ty == 'st'){
+        elementData.c = PropertyFactory.getProp(this,data.c,1,255,dynamicProperties);
+        if(!elementData.c.k){
+            styleElem.co = 'rgb('+bm_floor(elementData.c.v[0])+','+bm_floor(elementData.c.v[1])+','+bm_floor(elementData.c.v[2])+')';
+        }
+    }
+    elementData.o = PropertyFactory.getProp(this,data.o,0,0.01,dynamicProperties);
+    if(data.ty == 'st') {
+        styleElem.lc = this.lcEnum[data.lc] || 'round';
+        styleElem.lj = this.ljEnum[data.lj] || 'round';
+        if(data.lj == 1) {
+            styleElem.ml = data.ml;
+        }
+        elementData.w = PropertyFactory.getProp(this,data.w,0,null,dynamicProperties);
+        if(!elementData.w.k){
+            styleElem.wi = elementData.w.v;
+        }
+        if(data.d){
+            var d = PropertyFactory.getDashProp(this,data.d,'canvas',dynamicProperties);
+            elementData.d = d;
+            if(!elementData.d.k){
+                styleElem.da = elementData.d.dasharray;
+                styleElem.do = elementData.d.dashoffset;
+            }
+        }
+
+    } else {
+
+        styleElem.r = data.r === 2 ? 'evenodd' : 'nonzero';
+    }
+    this.stylesList.push(styleElem);
+    elementData.style = styleElem;
+    return elementData;
+}
+
+CVShapeElement.prototype.createGroupElement = function(data) {
+    var elementData = {
+        it: [],
+        prevViewData: []
+    };
+    return elementData;
+}
+
+CVShapeElement.prototype.createTransformElement = function(data, dynamicProperties) {
+    var elementData = {
+        transform : {
+            mat: new Matrix(),
+            opacity: 1,
+            matMdf:false,
+            opMdf:false,
+            op: PropertyFactory.getProp(this,data.o,0,0.01,dynamicProperties),
+            mProps: PropertyFactory.getProp(this,data,2,null,dynamicProperties)
+        },
+        elements: []
+    };
+    return elementData;
+}
+
+CVShapeElement.prototype.createShapeElement = function(data, dynamicProperties) {
+    var elementData = {
+        nodes:[],
+        trNodes:[],
+        tr:[0,0,0,0,0,0]
+    };
+    var ty = 4;
+    if(data.ty == 'rc'){
+        ty = 5;
+    }else if(data.ty == 'el'){
+        ty = 6;
+    }else if(data.ty == 'sr'){
+        ty = 7;
+    }
+    elementData.sh = ShapePropertyFactory.getShapeProp(this,data,ty,dynamicProperties);
+    this.shapes.push(elementData.sh);
+    this.addShapeToModifiers(elementData);
+    jLen = this.stylesList.length;
+    var hasStrokes = false, hasFills = false;
+    for(j=0;j<jLen;j+=1){
+        if(!this.stylesList[j].closed){
+            this.stylesList[j].elements.push(elementData);
+            if(this.stylesList[j].type === 'st'){
+                hasStrokes = true;
+            }else{
+                hasFills = true;
+            }
+        }
+    }
+    elementData.st = hasStrokes;
+    elementData.fl = hasFills;
+    return elementData;
+}
+
+CVShapeElement.prototype.reloadShapes = function(){
+    this.firstFrame = true;
+    var i, len = this.itemsData.length;
+    for(i=0;i<len;i+=1){
+        this.prevViewData[i] = this.itemsData[i];
+    }
+    this.searchShapes(this.shapesData,this.itemsData,this.prevViewData,this.dynamicProperties, true);
+    var i, len = this.dynamicProperties.length;
+    for(i=0;i<len;i+=1){
+        this.dynamicProperties[i].getValue();
+    }
+    this.renderModifiers();
+}
+
+CVShapeElement.prototype.searchShapes = function(arr,itemsData, prevViewData,dynamicProperties, render){
     var i, len = arr.length - 1;
     var j, jLen;
-    var ownArrays = [], ownModifiers = [], styleElem;
+    var ownArrays = [], ownModifiers = [], processedPos;
     for(i=len;i>=0;i-=1){
-        if(arr[i].ty == 'fl' || arr[i].ty == 'st'){
-            styleElem = {
-                type: arr[i].ty,
-                elements: []
-            };
-            data[i] = {};
-            if(arr[i].ty == 'fl' || arr[i].ty == 'st'){
-                data[i].c = PropertyFactory.getProp(this,arr[i].c,1,255,dynamicProperties);
-                if(!data[i].c.k){
-                    styleElem.co = 'rgb('+bm_floor(data[i].c.v[0])+','+bm_floor(data[i].c.v[1])+','+bm_floor(data[i].c.v[2])+')';
-                }
-            }
-            data[i].o = PropertyFactory.getProp(this,arr[i].o,0,0.01,dynamicProperties);
-            if(arr[i].ty == 'st') {
-                styleElem.lc = this.lcEnum[arr[i].lc] || 'round';
-                styleElem.lj = this.ljEnum[arr[i].lj] || 'round';
-                if(arr[i].lj == 1) {
-                    styleElem.ml = arr[i].ml;
-                }
-                data[i].w = PropertyFactory.getProp(this,arr[i].w,0,null,dynamicProperties);
-                if(!data[i].w.k){
-                    styleElem.wi = data[i].w.v;
-                }
-                if(arr[i].d){
-                    var d = PropertyFactory.getDashProp(this,arr[i].d,'canvas',dynamicProperties);
-                    data[i].d = d;
-                    if(!data[i].d.k){
-                        styleElem.da = data[i].d.dasharray;
-                        styleElem.do = data[i].d.dashoffset;
-                    }
-                }
-
-            } else {
-
-                styleElem.r = arr[i].r === 2 ? 'evenodd' : 'nonzero';
-            }
-            this.stylesList.push(styleElem);
-            data[i].style = styleElem;
-            ownArrays.push(data[i].style);
-        }else if(arr[i].ty == 'gr'){
-            data[i] = {
-                it: []
-            };
-            this.searchShapes(arr[i].it,data[i].it,dynamicProperties);
-        }else if(arr[i].ty == 'tr'){
-            data[i] = {
-                transform : {
-                    mat: new Matrix(),
-                    opacity: 1,
-                    matMdf:false,
-                    opMdf:false,
-                    op: PropertyFactory.getProp(this,arr[i].o,0,0.01,dynamicProperties),
-                    mProps: PropertyFactory.getProp(this,arr[i],2,null,dynamicProperties)
-                },
-                elements: []
-            };
-        }else if(arr[i].ty == 'sh' || arr[i].ty == 'rc' || arr[i].ty == 'el' || arr[i].ty == 'sr'){
-            data[i] = {
-                nodes:[],
-                trNodes:[],
-                tr:[0,0,0,0,0,0]
-            };
-            var ty = 4;
-            if(arr[i].ty == 'rc'){
-                ty = 5;
-            }else if(arr[i].ty == 'el'){
-                ty = 6;
-            }else if(arr[i].ty == 'sr'){
-                ty = 7;
-            }
-            data[i].sh = ShapePropertyFactory.getShapeProp(this,arr[i],ty,dynamicProperties);
-            this.shapes.push(data[i].sh);
-            this.addShapeToModifiers(data[i].sh);
-            jLen = this.stylesList.length;
-            var hasStrokes = false, hasFills = false;
-            for(j=0;j<jLen;j+=1){
-                if(!this.stylesList[j].closed){
-                    this.stylesList[j].elements.push(data[i]);
-                    if(this.stylesList[j].type === 'st'){
-                        hasStrokes = true;
-                    }else{
-                        hasFills = true;
-                    }
-                }
-            }
-            data[i].st = hasStrokes;
-            data[i].fl = hasFills;
-        }else if(arr[i].ty == 'tm' || arr[i].ty == 'rd'){
-            var modifier = ShapeModifiers.getModifier(arr[i].ty);
-            modifier.init(this,arr[i],dynamicProperties);
-            this.shapeModifiers.push(modifier);
-            ownModifiers.push(modifier);
-            data[i] = modifier;
+        processedPos = this.searchProcessedElement(arr[i]);
+        if(!processedPos){
+            arr[i]._render = render;
+        } else {
+            itemsData[i] = prevViewData[processedPos - 1];
         }
+        if(arr[i].ty == 'fl' || arr[i].ty == 'st'){
+            if(!processedPos){
+                itemsData[i] = this.createStyleElement(arr[i], dynamicProperties);
+            } else {
+                itemsData[i].style.closed = false;
+            }
+            
+            ownArrays.push(itemsData[i].style);
+        }else if(arr[i].ty == 'gr'){
+            if(!processedPos){
+                itemsData[i] = this.createGroupElement(arr[i]);
+            } else {
+                jLen = itemsData[i].it.length;
+                for(j=0;j<jLen;j+=1){
+                    itemsData[i].prevViewData[j] = itemsData[i].it[j];
+                }
+            }
+            this.searchShapes(arr[i].it,itemsData[i].it,itemsData[i].prevViewData,dynamicProperties, render);
+        }else if(arr[i].ty == 'tr'){
+            if(!processedPos){
+                itemsData[i] = this.createTransformElement(arr[i], dynamicProperties);
+            }
+        }else if(arr[i].ty == 'sh' || arr[i].ty == 'rc' || arr[i].ty == 'el' || arr[i].ty == 'sr'){
+            if(!processedPos){
+                itemsData[i] = this.createShapeElement(arr[i], dynamicProperties);
+            }
+            
+        }else if(arr[i].ty == 'tm' || arr[i].ty == 'rd'){
+            if(!processedPos){
+                var modifier = ShapeModifiers.getModifier(arr[i].ty);
+                modifier.init(this,arr[i],dynamicProperties);
+                itemsData[i] = modifier;
+                this.shapeModifiers.push(modifier);
+            } else {
+                modifier = itemsData[i];
+                modifier.closed = false;
+            }
+            ownModifiers.push(modifier);
+        } else if(arr[i].ty == 'rp'){
+            if(!processedPos){
+                modifier = ShapeModifiers.getModifier(arr[i].ty);
+                itemsData[i] = modifier;
+                modifier.init(this,arr,i,itemsData,dynamicProperties);
+                this.shapeModifiers.push(modifier);
+                render = false;
+            }else{
+                modifier = itemsData[i];
+                modifier.closed = true;
+            }
+            ownModifiers.push(modifier);
+        }
+        this.addProcessedElement(arr[i], i + 1);
     }
     len = ownArrays.length;
     for(i=0;i<len;i+=1){
@@ -9303,6 +10296,10 @@ CVShapeElement.prototype.searchShapes = function(arr,data,dynamicProperties){
 
 CVShapeElement.prototype.addShapeToModifiers = IShapeElement.prototype.addShapeToModifiers;
 CVShapeElement.prototype.renderModifiers = IShapeElement.prototype.renderModifiers;
+CVShapeElement.prototype.lcEnum = IShapeElement.prototype.lcEnum;
+CVShapeElement.prototype.ljEnum = IShapeElement.prototype.ljEnum;
+CVShapeElement.prototype.searchProcessedElement = IShapeElement.prototype.searchProcessedElement;
+CVShapeElement.prototype.addProcessedElement = IShapeElement.prototype.addProcessedElement;
 
 CVShapeElement.prototype.renderFrame = function(parentMatrix){
     if(this._parent.renderFrame.call(this, parentMatrix)===false){
@@ -9330,7 +10327,7 @@ CVShapeElement.prototype.renderShape = function(parentTransform,items,data,isMai
         }
     }
     if(!data){
-        data = this.viewData;
+        data = this.itemsData;
     }
     ///
     ///
@@ -9376,7 +10373,7 @@ CVShapeElement.prototype.renderShape = function(parentTransform,items,data,isMai
     renderer.ctxTransform(this.finalTransform.mat.props);
     for(i=0;i<len;i+=1){
         type = this.stylesList[i].type;
-        if(type === 'st' && this.stylesList[i].wi === 0){
+        if((type === 'st' && this.stylesList[i].wi === 0) || !this.stylesList[i].data._render){
             continue;
         }
         renderer.save();
@@ -9433,18 +10430,18 @@ CVShapeElement.prototype.renderShape = function(parentTransform,items,data,isMai
         this.firstFrame = false;
     }
 };
-CVShapeElement.prototype.renderPath = function(pathData,viewData,groupTransform){
+CVShapeElement.prototype.renderPath = function(pathData,itemData,groupTransform){
     var len, i, j,jLen;
-    var redraw = groupTransform.matMdf || viewData.sh.mdf || this.firstFrame;
+    var redraw = groupTransform.matMdf || itemData.sh.mdf || this.firstFrame;
     if(redraw) {
-        var paths = viewData.sh.paths;
-        jLen = paths.length;
-        var pathStringTransformed = viewData.trNodes;
+        var paths = itemData.sh.paths;
+        jLen = paths._length;
+        var pathStringTransformed = itemData.trNodes;
         pathStringTransformed.length = 0;
         for(j=0;j<jLen;j+=1){
-            var pathNodes = paths[j];
+            var pathNodes = paths.shapes[j];
             if(pathNodes && pathNodes.v){
-                len = pathNodes.v.length;
+                len = pathNodes._length;
                 for (i = 1; i < len; i += 1) {
                     if (i == 1) {
                         pathStringTransformed.push({
@@ -9476,51 +10473,51 @@ CVShapeElement.prototype.renderPath = function(pathData,viewData,groupTransform)
                         t: 'z'
                     });
                 }
-                viewData.lStr = pathStringTransformed;
+                itemData.lStr = pathStringTransformed;
             }
 
         }
 
-        if (viewData.st) {
+        if (itemData.st) {
             for (i = 0; i < 16; i += 1) {
-                viewData.tr[i] = groupTransform.mat.props[i];
+                itemData.tr[i] = groupTransform.mat.props[i];
             }
         }
-        viewData.trNodes = pathStringTransformed;
+        itemData.trNodes = pathStringTransformed;
 
     }
 };
 
 
 
-CVShapeElement.prototype.renderFill = function(styleData,viewData, groupTransform){
-    var styleElem = viewData.style;
+CVShapeElement.prototype.renderFill = function(styleData,itemData, groupTransform){
+    var styleElem = itemData.style;
 
-    if(viewData.c.mdf || this.firstFrame){
-        styleElem.co = 'rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')';
+    if(itemData.c.mdf || this.firstFrame){
+        styleElem.co = 'rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')';
     }
-    if(viewData.o.mdf || groupTransform.opMdf || this.firstFrame){
-        styleElem.coOp = viewData.o.v*groupTransform.opacity;
+    if(itemData.o.mdf || groupTransform.opMdf || this.firstFrame){
+        styleElem.coOp = itemData.o.v*groupTransform.opacity;
     }
 };
 
-CVShapeElement.prototype.renderStroke = function(styleData,viewData, groupTransform){
-    var styleElem = viewData.style;
+CVShapeElement.prototype.renderStroke = function(styleData,itemData, groupTransform){
+    var styleElem = itemData.style;
     //TODO fix dashes
-    var d = viewData.d;
+    var d = itemData.d;
     var dasharray,dashoffset;
     if(d && (d.mdf  || this.firstFrame)){
         styleElem.da = d.dasharray;
         styleElem.do = d.dashoffset;
     }
-    if(viewData.c.mdf || this.firstFrame){
-        styleElem.co = 'rgb('+bm_floor(viewData.c.v[0])+','+bm_floor(viewData.c.v[1])+','+bm_floor(viewData.c.v[2])+')';
+    if(itemData.c.mdf || this.firstFrame){
+        styleElem.co = 'rgb('+bm_floor(itemData.c.v[0])+','+bm_floor(itemData.c.v[1])+','+bm_floor(itemData.c.v[2])+')';
     }
-    if(viewData.o.mdf || groupTransform.opMdf || this.firstFrame){
-        styleElem.coOp = viewData.o.v*groupTransform.opacity;
+    if(itemData.o.mdf || groupTransform.opMdf || this.firstFrame){
+        styleElem.coOp = itemData.o.v*groupTransform.opacity;
     }
-    if(viewData.w.mdf || this.firstFrame){
-        styleElem.wi = viewData.w.v;
+    if(itemData.w.mdf || this.firstFrame){
+        styleElem.wi = itemData.w.v;
     }
 };
 
@@ -9530,7 +10527,7 @@ CVShapeElement.prototype.destroy = function(){
     this.globalData = null;
     this.canvasContext = null;
     this.stylesList.length = 0;
-    this.viewData.length = 0;
+    this.itemData.length = 0;
     this._parent.destroy.call(this._parent);
 };
 
@@ -9577,7 +10574,6 @@ function CVTextElement(data, comp, globalData){
 createElement(CVBaseElement, CVTextElement);
 
 CVTextElement.prototype.init = ITextElement.prototype.init;
-CVTextElement.prototype.getMeasures = ITextElement.prototype.getMeasures;
 CVTextElement.prototype.getMult = ITextElement.prototype.getMult;
 CVTextElement.prototype.prepareFrame = ITextElement.prototype.prepareFrame;
 
@@ -9645,6 +10641,7 @@ CVTextElement.prototype.buildNewText = function(){
                 if(documentData.ps){
                     matrixHelper.translate(documentData.ps[0],documentData.ps[1] + documentData.ascent,0);
                 }
+                matrixHelper.translate(0,-documentData.ls,0);
                 switch(documentData.j){
                     case 1:
                         matrixHelper.translate(documentData.justifyOffset + (boxWidth - lineWidths[letters[i].line]),0,0);
@@ -9699,11 +10696,11 @@ CVTextElement.prototype.renderFrame = function(parentMatrix){
     ctx.miterLimit = 4;
 
     if(!this.data.singleShape){
-        this.getMeasures();
+        this.textAnimator.getMeasures(this.currentTextDocumentData, this.lettersChangedFlag);
     }
 
-    var  i,len, j, jLen, k, kLen;
-    var renderedLetters = this.renderedLetters;
+    var  i,len, j, jLen, k, kLen,count=0;
+    var renderedLetters = this.textAnimator.renderedLetters;
 
     var letters = this.currentTextDocumentData.l;
 
@@ -9714,10 +10711,11 @@ CVTextElement.prototype.renderFrame = function(parentMatrix){
         if(letters[i].n){
             continue;
         }
-        renderedLetter = renderedLetters[i];
+        renderedLetter = renderedLetters[count];
+        count += 1;
         if(renderedLetter){
             this.globalData.renderer.save();
-            this.globalData.renderer.ctxTransform(renderedLetter.props);
+            this.globalData.renderer.ctxTransform(renderedLetter.p);
             this.globalData.renderer.ctxOpacity(renderedLetter.o);
         }
         if(this.fill){
@@ -9980,7 +10978,8 @@ HSolidElement.prototype.createElements = function(){
 
 
 
-HSolidElement.prototype.hide = IImageElement.prototype.hide;
+HSolidElement.prototype.hide = SVGBaseElement.prototype.hide;
+HSolidElement.prototype.show = SVGBaseElement.prototype.show;
 HSolidElement.prototype.renderFrame = IImageElement.prototype.renderFrame;
 HSolidElement.prototype.destroy = IImageElement.prototype.destroy;
 function HCompElement(data,parentContainer,globalData,comp, placeholder){
@@ -10074,15 +11073,13 @@ HCompElement.prototype.createBase = HybridRenderer.prototype.createBase;
 HCompElement.prototype.appendElementInPos = HybridRenderer.prototype.appendElementInPos;
 function HShapeElement(data,parentContainer,globalData,comp, placeholder){
     this.shapes = [];
-    this.shapeModifiers = [];
     this.shapesData = data.shapes;
     this.stylesList = [];
-    this.viewData = [];
+    this.itemsData = [];
+    this.prevViewData = [];
+    this.shapeModifiers = [];
+    this.processedElements = [];
     this._parent.constructor.call(this,data,parentContainer,globalData,comp, placeholder);
-    this.addedTransforms = {
-        mdf: false,
-        mats: [this.finalTransform.mat]
-    };
     this.currentBBox = {
         x:999999,
         y: -999999,
@@ -10094,6 +11091,7 @@ createElement(HBaseElement, HShapeElement);
 var parent = HShapeElement.prototype._parent;
 extendPrototype(IShapeElement, HShapeElement);
 HShapeElement.prototype._parent = parent;
+HShapeElement.prototype._renderShapeFrame = HShapeElement.prototype.renderFrame;
 
 HShapeElement.prototype.createElements = function(){
     var parent = document.createElement('div');
@@ -10124,7 +11122,8 @@ HShapeElement.prototype.createElements = function(){
     if(this.data.ln){
         this.innerElem.setAttribute('id',this.data.ln);
     }
-    this.searchShapes(this.shapesData,this.viewData,this.layerElement,this.dynamicProperties,0);
+
+    this.searchShapes(this.shapesData,this.itemsData,this.prevViewData,this.layerElement,this.dynamicProperties,0, [], true);
     this.buildExpressionInterface();
     this.layerElement = parent;
     this.transformedElement = parent;
@@ -10136,22 +11135,10 @@ HShapeElement.prototype.createElements = function(){
 };
 
 HShapeElement.prototype.renderFrame = function(parentMatrix){
-    var renderParent = this._parent.renderFrame.call(this,parentMatrix);
-    if(renderParent===false){
-        this.hide();
-        return;
-    }
-    if(this.hidden){
-        this.layerElement.style.display = 'block';
-        this.hidden = false;
-    }
-    this.renderModifiers();
-    this.addedTransforms.mdf = this.finalTransform.matMdf;
-    this.addedTransforms.mats.length = 1;
-    this.addedTransforms.mats[0] = this.finalTransform.mat;
-    this.renderShape(null,null,true, null);
+    var firstFrame = this.firstFrame;
+    this._renderShapeFrame();
 
-    if(this.isVisible && (this.elemMdf || this.firstFrame)){
+    if(this.isVisible && (this.elemMdf || firstFrame)){
         var boundingBox = this.shapeCont.getBBox();
         var changed = false;
         if(this.currentBBox.w !== boundingBox.width){
@@ -10193,9 +11180,9 @@ function HTextElement(data,parentContainer,globalData,comp, placeholder){
 createElement(HBaseElement, HTextElement);
 
 HTextElement.prototype.init = ITextElement.prototype.init;
-HTextElement.prototype.getMeasures = ITextElement.prototype.getMeasures;
 HTextElement.prototype.createPathShape = ITextElement.prototype.createPathShape;
 HTextElement.prototype.prepareFrame = ITextElement.prototype.prepareFrame;
+HTextElement.prototype.buildShapeString = ITextElement.prototype.buildShapeString;
 
 HTextElement.prototype.createElements = function(){
     this.isMasked = this.checkMasks();
@@ -10208,8 +11195,8 @@ HTextElement.prototype.createElements = function(){
         var cont = document.createElementNS(svgNS,'svg');
         styleDiv(cont);
         this.cont = cont;
-        this.compW = this.comp.data ? this.comp.data.w : this.globalData.compSize.w;
-        this.compH = this.comp.data ? this.comp.data.h : this.globalData.compSize.h;
+        this.compW = this.comp.data.w;
+        this.compH = this.comp.data.h;
         cont.setAttribute('width',this.compW);
         cont.setAttribute('height',this.compH);
         var g = document.createElementNS(svgNS,'g');
@@ -10397,12 +11384,12 @@ HTextElement.prototype.renderFrame = function(parentMatrix){
         }
     }
 
-    this.getMeasures();
-    if(!this.lettersChangedFlag){
+    this.textAnimator.getMeasures(this.currentTextDocumentData, this.lettersChangedFlag);
+    if(!this.lettersChangedFlag && !this.textAnimator.lettersChangedFlag){
         return;
     }
-    var  i,len;
-    var renderedLetters = this.renderedLetters;
+    var  i,len, count = 0;
+    var renderedLetters = this.textAnimator.renderedLetters;
 
     var letters = this.currentTextDocumentData.l;
 
@@ -10412,7 +11399,8 @@ HTextElement.prototype.renderFrame = function(parentMatrix){
         if(letters[i].n){
             continue;
         }
-        renderedLetter = renderedLetters[i];
+        renderedLetter = renderedLetters[count];
+        count += 1;
         if(!this.isMasked){
             this.textSpans[i].style.transform = this.textSpans[i].style.webkitTransform = renderedLetter.m;
         }else{
@@ -10520,7 +11508,7 @@ function HCameraElement(data,parentContainer,globalData,comp, placeholder){
     if(data.ks.a){
         this.a = PropertyFactory.getProp(this,data.ks.a,1,0,this.dynamicProperties);
     }
-    if(data.ks.or.k.length){
+    if(data.ks.or.k.length && data.ks.or.k[0].to){
         var i,len = data.ks.or.k.length;
         for(i=0;i<len;i+=1){
             data.ks.or.k[i].to = null;
@@ -10619,13 +11607,14 @@ var Expressions = (function(){
 
 expressionsPlugin = Expressions;
 
-(function addPropertyDecorator(){
+(function addPropertyDecorator() {
 
-    function getStaticValueAtTime(){
+    function getStaticValueAtTime() {
         return this.pv;
     }
 
     function getValueAtTime(frameNum, offsetTime) {
+        frameNum *= this.elem.globalData.frameRate;
         var i = 0,len = this.keyframes.length- 1,dir= 1,flag = true;
         var keyData, nextKeyData;
         offsetTime = offsetTime === undefined ? this.offsetTime : 0;
@@ -10652,58 +11641,58 @@ expressionsPlugin = Expressions;
         }
 
         var k, kLen,perc,jLen, j = 0, fnc;
-        if(keyData.to){
+        if (keyData.to) {
 
-            if(!keyData.bezierData){
+            if (!keyData.bezierData) {
                 bez.buildBezierData(keyData);
             }
             var bezierData = keyData.bezierData;
-            if(frameNum >= nextKeyData.t-offsetTime || frameNum < keyData.t-offsetTime){
+            if (frameNum >= nextKeyData.t-offsetTime || frameNum < keyData.t-offsetTime) {
                 var ind = frameNum >= nextKeyData.t-offsetTime ? bezierData.points.length - 1 : 0;
                 kLen = bezierData.points[ind].point.length;
                 for(k = 0; k < kLen; k += 1){
                     retVal[k] = bezierData.points[ind].point[k];
                 }
-            }else{
-                if(keyData.__fnct){
+            } else {
+                if (keyData.__fnct) {
                     fnc = keyData.__fnct;
-                }else{
+                } else {
                     //fnc = bez.getEasingCurve(keyData.o.x,keyData.o.y,keyData.i.x,keyData.i.y,keyData.n);
-                    fnc = BezierFactory.getBezierEasing(keyData.o.x,keyData.o.y,keyData.i.x,keyData.i.y,keyData.n).get;
+                    fnc = BezierFactory.getBezierEasing(keyData.o.x, keyData.o.y, keyData.i.x, keyData.i.y, keyData.n).get;
                     keyData.__fnct = fnc;
                 }
-                perc = fnc((frameNum-(keyData.t-offsetTime))/((nextKeyData.t-offsetTime)-(keyData.t-offsetTime)));
-                var distanceInLine = bezierData.segmentLength*perc;
+                perc = fnc((frameNum - (keyData.t - offsetTime)) / ((nextKeyData.t - offsetTime) - (keyData.t - offsetTime)));
+                var distanceInLine = bezierData.segmentLength * perc;
 
                 var segmentPerc;
                 var addedLength = 0;
                 dir = 1;
                 flag = true;
                 jLen = bezierData.points.length;
-                while(flag){
-                    addedLength +=bezierData.points[j].partialLength*dir;
-                    if(distanceInLine === 0 || perc === 0 || j == bezierData.points.length - 1){
+                while(flag) {
+                    addedLength += bezierData.points[j].partialLength*dir;
+                    if (distanceInLine === 0 || perc === 0 || j == bezierData.points.length - 1) {
                         kLen = bezierData.points[j].point.length;
-                        for(k=0;k<kLen;k+=1){
+                        for (k = 0; k < kLen; k += 1) {
                             retVal[k] = bezierData.points[j].point[k];
                         }
                         break;
-                    }else if(distanceInLine >= addedLength && distanceInLine < addedLength + bezierData.points[j+1].partialLength){
-                        segmentPerc = (distanceInLine-addedLength)/(bezierData.points[j+1].partialLength);
+                    } else if (distanceInLine >= addedLength && distanceInLine < addedLength + bezierData.points[j+1].partialLength){
+                        segmentPerc = (distanceInLine - addedLength) / (bezierData.points[j + 1].partialLength);
                         kLen = bezierData.points[j].point.length;
-                        for(k=0;k<kLen;k+=1){
-                            retVal[k] = bezierData.points[j].point[k] + (bezierData.points[j+1].point[k] - bezierData.points[j].point[k])*segmentPerc;
+                        for (k = 0; k < kLen; k += 1) {
+                            retVal[k] = bezierData.points[j].point[k] + (bezierData.points[j+1].point[k] - bezierData.points[j].point[k]) * segmentPerc;
                         }
                         break;
                     }
-                    if(j < jLen - 1 && dir == 1 || j > 0 && dir == -1){
+                    if (j < jLen - 1 && dir == 1 || j > 0 && dir == -1) {
                         j += dir;
-                    }else{
+                    } else {
                         flag = false;
                     }
                 }
             }
-        }else{
+        } else {
             var outX,outY,inX,inY, isArray = false, keyValue;
             len = keyData.s.length;
             for(i=0;i<len;i+=1){
@@ -10780,16 +11769,18 @@ expressionsPlugin = Expressions;
             return this.vel;
         }
         var delta = -0.01;
-        frameNum *= this.elem.globalData.frameRate;
         //frameNum += this.elem.data.st;
-        var v1 = this.getValueAtTime(frameNum,0);
-        var v2 = this.getValueAtTime(frameNum + delta,0);
+        var v1 = this.getValueAtTime(frameNum, 0);
+        var v2 = this.getValueAtTime(frameNum + delta, 0);
         var velocity;
         if(v1.length){
             velocity = Array.apply(null,{length:v1.length});
             var i;
             for(i=0;i<v1.length;i+=1){
-                velocity[i] = this.elem.globalData.frameRate*((v2[i] - v1[i])/delta);
+                //removing frameRate
+                //if needed, don't add it here
+                //velocity[i] = this.elem.globalData.frameRate*((v2[i] - v1[i])/delta);
+                velocity[i] = (v2[i] - v1[i])/delta;
             }
         } else {
             velocity = (v2 - v1)/delta;
@@ -10810,6 +11801,14 @@ expressionsPlugin = Expressions;
             }
             prop.getValue = ExpressionManager.initiateExpression.bind(prop)(elem,data,prop);
         }
+    }
+
+    function getTransformValueAtTime(time) {
+        console.log('time:', time)
+    }
+
+    function getTransformStaticValueAtTime(time) {
+
     }
 
     var TextExpressionSelectorProp = (function(){
@@ -10834,9 +11833,9 @@ expressionsPlugin = Expressions;
             this.getMult = getValueProxy;
             this.getVelocityAtTime = getVelocityAtTime;
             if(this.kf){
-                this.getValueAtTime = getValueAtTime;
+                this.getValueAtTime = getValueAtTime.bind(this);
             } else {
-                this.getValueAtTime = getStaticValueAtTime;
+                this.getValueAtTime = getStaticValueAtTime.bind(this);
             }
             this.setGroupProperty = setGroupProperty;
         }
@@ -10847,10 +11846,18 @@ expressionsPlugin = Expressions;
     PropertyFactory.getProp = function(elem,data,type, mult, arr){
         var prop = propertyGetProp(elem,data,type, mult, arr);
         prop.getVelocityAtTime = getVelocityAtTime;
-        if(prop.kf){
-            prop.getValueAtTime = getValueAtTime;
+        if(type === 2) {
+            if(prop.dynamicProperties.length) {
+                prop.getValueAtTime = getTransformValueAtTime.bind(prop);
+            } else {
+                prop.getValueAtTime = getTransformStaticValueAtTime.bind(prop);
+            }
         } else {
-            prop.getValueAtTime = getStaticValueAtTime;
+            if(prop.kf){
+                prop.getValueAtTime = getValueAtTime.bind(prop);
+            } else {
+                prop.getValueAtTime = getStaticValueAtTime.bind(prop);
+            }
         }
         prop.setGroupProperty = setGroupProperty;
         var isAdded = prop.k;
@@ -10873,6 +11880,11 @@ expressionsPlugin = Expressions;
     ShapePropertyFactory.getShapeProp = function(elem,data,type, arr, trims){
         var prop = propertyGetShapeProp(elem,data,type, arr, trims);
         prop.setGroupProperty = setGroupProperty;
+        if(prop.kf){
+            prop.getValueAtTime = getValueAtTime;
+        } else {
+            prop.getValueAtTime = getStaticValueAtTime;
+        }
         var isAdded = prop.k;
         if(data.ix !== undefined){
             Object.defineProperty(prop,'propertyIndex',{
@@ -10904,11 +11916,13 @@ expressionsPlugin = Expressions;
 var ExpressionManager = (function(){
     var ob = {};
     var Math = BMMath;
+    var window = null;
+    var document = null;
 
     function duplicatePropertyValue(value, mult){
         mult = mult || 1;
 
-        if(typeof value === 'number'){
+        if(typeof value === 'number'  || value instanceof Number){
             return value*mult;
         }else if(value.i){
             return JSON.parse(JSON.stringify(value));
@@ -10922,12 +11936,27 @@ var ExpressionManager = (function(){
         }
     }
 
+    function shapesEqual(shape1, shape2) {
+        if(shape1._length !== shape2._length || shape1.c !== shape2.c){
+            return false;
+        }
+        var i, len = shape1._length;
+        for(i = 0; i < len; i += 1) {
+            if(shape1.v[i][0] !== shape2.v[i][0] || shape1.v[i][1] !== shape2.v[i][1]
+                || shape1.o[i][0] !== shape2.o[i][0] || shape1.o[i][1] !== shape2.o[i][1]
+                || shape1.i[i][0] !== shape2.i[i][0] || shape1.i[i][1] !== shape2.i[i][1]){
+                return false;
+            }
+        }
+        return true;
+    }
+
     function $bm_neg(a){
         var tOfA = typeof a;
-        if(tOfA === 'number' || tOfA === 'boolean'){
+        if(tOfA === 'number' || tOfA === 'boolean'  || a instanceof Number ){
             return -a;
         }
-        if(tOfA === 'object'){
+        if(a.constructor === Array){
             var i, lenA = a.length;
             var retArr = [];
             for(i=0;i<lenA;i+=1){
@@ -10943,22 +11972,23 @@ var ExpressionManager = (function(){
         if(tOfA === 'string' || tOfB === 'string'){
             return a + b;
         }
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')) {
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number) && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string'  || b instanceof Number)) {
             return a + b;
         }
-        if(tOfA === 'object' && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')){
+        if(a.constructor === Array && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )){
             a[0] = a[0] + b;
             return a;
         }
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && tOfB === 'object'){
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && b.constructor === Array){
             b[0] = a + b[0];
             return b;
         }
-        if(tOfA === 'object' && tOfB === 'object'){
+        if(a.constructor === Array && b.constructor === Array){
+            
             var i = 0, lenA = a.length, lenB = b.length;
             var retArr = [];
             while(i<lenA || i < lenB){
-                if(typeof a[i] === 'number' && typeof b[i] === 'number'){
+                if((typeof a[i] === 'number' || a[i] instanceof Number) && (typeof b[i] === 'number' || b[i] instanceof Number)){
                     retArr[i] = a[i] + b[i];
                 }else{
                     retArr[i] = b[i] == undefined ? a[i] : a[i] || b[i];
@@ -10969,26 +11999,33 @@ var ExpressionManager = (function(){
         }
         return 0;
     }
+    var add = sum;
 
     function sub(a,b) {
         var tOfA = typeof a;
         var tOfB = typeof b;
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')) {
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )) {
+            if(tOfA === 'string') {
+                a = parseInt(a);
+            }
+            if(tOfB === 'string') {
+                b = parseInt(b);
+            }
             return a - b;
         }
-        if(tOfA === 'object' && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')){
+        if( a.constructor === Array && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )){
             a[0] = a[0] - b;
             return a;
         }
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && tOfB === 'object'){
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) &&  b.constructor === Array){
             b[0] = a - b[0];
             return b;
         }
-        if(tOfA === 'object' && tOfB === 'object'){
+        if(a.constructor === Array && b.constructor === Array){
             var i = 0, lenA = a.length, lenB = b.length;
             var retArr = [];
             while(i<lenA || i < lenB){
-                if(typeof a[i] === 'number' && typeof b[i] === 'number'){
+                if((typeof a[i] === 'number' || a[i] instanceof Number) && typeof (typeof b[i] === 'number' || b[i] instanceof Number)){
                     retArr[i] = a[i] - b[i];
                 }else{
                     retArr[i] = b[i] == undefined ? a[i] : a[i] || b[i];
@@ -11004,12 +12041,12 @@ var ExpressionManager = (function(){
         var tOfA = typeof a;
         var tOfB = typeof b;
         var arr;
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')) {
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )) {
             return a * b;
         }
 
         var i, len;
-        if(tOfA === 'object' && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')){
+        if(a.constructor === Array && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )){
             len = a.length;
             arr = Array.apply(null,{length:len});
             for(i=0;i<len;i+=1){
@@ -11017,7 +12054,7 @@ var ExpressionManager = (function(){
             }
             return arr;
         }
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && tOfB === 'object'){
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && b.constructor === Array){
             len = b.length;
             arr = Array.apply(null,{length:len});
             for(i=0;i<len;i+=1){
@@ -11032,11 +12069,11 @@ var ExpressionManager = (function(){
         var tOfA = typeof a;
         var tOfB = typeof b;
         var arr;
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')) {
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number )) {
             return a / b;
         }
         var i, len;
-        if(tOfA === 'object' && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string')){
+        if(a.constructor === Array && (tOfB === 'number' || tOfB === 'boolean' || tOfB === 'string' || b instanceof Number  )){
             len = a.length;
             arr = Array.apply(null,{length:len});
             for(i=0;i<len;i+=1){
@@ -11044,7 +12081,7 @@ var ExpressionManager = (function(){
             }
             return arr;
         }
-        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string') && tOfB === 'object'){
+        if((tOfA === 'number' || tOfA === 'boolean' || tOfA === 'string' || a instanceof Number ) && b.constructor === Array){
             len = b.length;
             arr = Array.apply(null,{length:len});
             for(i=0;i<len;i+=1){
@@ -11053,6 +12090,15 @@ var ExpressionManager = (function(){
             return arr;
         }
         return 0;
+    }
+    function mod(a,b) {
+        if(typeof a === 'string') {
+            a = parseInt(a);
+        }
+        if(typeof b === 'string') {
+            b = parseInt(b);
+        }
+        return a % b;
     }
 
     function clamp(num, min, max) {
@@ -11077,7 +12123,7 @@ var ExpressionManager = (function(){
     var helperLengthArray = [0,0,0,0,0,0];
 
     function length(arr1,arr2){
-        if(typeof arr1 === "number"){
+        if(typeof arr1 === 'number' || arr1 instanceof Number){
             arr2 = arr2 || 0;
             return Math.abs(arr1 - arr2);
         }
@@ -11196,7 +12242,8 @@ var ExpressionManager = (function(){
 
     function initiateExpression(elem,data,property){
         var val = data.x;
-        var needsVelocity = val.indexOf('velocity') !== -1;
+        var needsVelocity = /velocity(?![\w\d])/.test(val);
+        var _needsRandom = val.indexOf('random') !== -1;
         var elemType = elem.data.ty;
         var transform,content,effect;
         var thisComp = elem.comp;
@@ -11204,13 +12251,16 @@ var ExpressionManager = (function(){
         elem.comp.frameDuration = 1/elem.comp.globalData.frameRate;
         var inPoint = elem.data.ip/elem.comp.globalData.frameRate;
         var outPoint = elem.data.op/elem.comp.globalData.frameRate;
-        var thisLayer,thisComp;
+        var width = elem.data.sw ? elem.data.sw : 0;
+        var height = elem.data.sh ? elem.data.sh : 0;
+        var toWorld,fromWorld,anchorPoint,thisLayer,thisComp;
         var fn = new Function();
         //var fnStr = 'var fn = function(){'+val+';this.v = $bm_rt;}';
         //eval(fnStr);
+
         var fn = eval('[function(){' + val+';this.v = $bm_rt;}' + ']')[0];
         var bindedFn = fn.bind(this);
-        var numKeys = data.k ? data.k.length : 0;
+        var numKeys = property.kf ? data.k.length : 0;
 
         var wiggle = function wiggle(freq,amp){
             var i,j, len = this.pv.length ? this.pv.length : 1;
@@ -11234,12 +12284,16 @@ var ExpressionManager = (function(){
             var periods = time*freq;
             var perc = periods - Math.floor(periods);
             var arr = Array.apply({length:len});
-            for(j=0;j<len;j+=1){
-                arr[j] = this.pv[j] + addedAmps[j] + (-amp + amp*2*BMMath.random())*perc;
-                //arr[j] = this.pv[j] + addedAmps[j] + (-amp + amp*2*rnd)*perc;
-                //arr[i] = this.pv[i] + addedAmp + amp1*perc + amp2*(1-perc);
+            if(len>1){
+                for(j=0;j<len;j+=1){
+                    arr[j] = this.pv[j] + addedAmps[j] + (-amp + amp*2*BMMath.random())*perc;
+                    //arr[j] = this.pv[j] + addedAmps[j] + (-amp + amp*2*rnd)*perc;
+                    //arr[i] = this.pv[i] + addedAmp + amp1*perc + amp2*(1-perc);
+                }
+                return arr;
+            } else {
+                return this.pv + addedAmps[0] + (-amp + amp*2*BMMath.random())*perc;
             }
-            return arr;
         }.bind(this);
 
         var loopIn = function loopIn(type,duration, durationFlag) {
@@ -11271,12 +12325,12 @@ var ExpressionManager = (function(){
                 if(type === 'pingpong') {
                     var iterations = Math.floor((firstKeyFrame - currentFrame)/cycleDuration);
                     if(iterations % 2 === 0){
-                        return this.getValueAtTime((firstKeyFrame - currentFrame)%cycleDuration +  firstKeyFrame, 0);
+                        return this.getValueAtTime(((firstKeyFrame - currentFrame)%cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
                     }
                 } else if(type === 'offset'){
-                    var initV = this.getValueAtTime(firstKeyFrame, 0);
-                    var endV = this.getValueAtTime(lastKeyFrame, 0);
-                    var current = this.getValueAtTime(cycleDuration - (firstKeyFrame - currentFrame)%cycleDuration +  firstKeyFrame, 0);
+                    var initV = this.getValueAtTime(firstKeyFrame / this.comp.globalData.frameRate, 0);
+                    var endV = this.getValueAtTime(lastKeyFrame / this.comp.globalData.frameRate, 0);
+                    var current = this.getValueAtTime((cycleDuration - (firstKeyFrame - currentFrame)%cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
                     var repeats = Math.floor((firstKeyFrame - currentFrame)/cycleDuration)+1;
                     if(this.pv.length){
                         ret = new Array(initV.length);
@@ -11288,19 +12342,19 @@ var ExpressionManager = (function(){
                     }
                     return current-(endV-initV)*repeats;
                 } else if(type === 'continue'){
-                    var firstValue = this.getValueAtTime(firstKeyFrame, 0);
-                    var nextFirstValue = this.getValueAtTime(firstKeyFrame + 0.001, 0);
+                    var firstValue = this.getValueAtTime(firstKeyFrame / this.comp.globalData.frameRate, 0);
+                    var nextFirstValue = this.getValueAtTime((firstKeyFrame + 0.001) / this.comp.globalData.frameRate, 0);
                     if(this.pv.length){
                         ret = new Array(firstValue.length);
                         len = ret.length;
                         for(i=0;i<len;i+=1){
-                            ret[i] = firstValue[i] + (firstValue[i]-nextFirstValue[i])*(firstKeyFrame - currentFrame)/0.0005;
+                            ret[i] = firstValue[i] + (firstValue[i]-nextFirstValue[i])*(firstKeyFrame - currentFrame)/0.001;
                         }
                         return ret;
                     }
-                    return firstValue + (firstValue-nextFirstValue)*(firstKeyFrame - currentFrame)/0.0005;
+                    return firstValue + (firstValue-nextFirstValue)*(firstKeyFrame - currentFrame)/0.001;
                 }
-                return this.getValueAtTime(cycleDuration - (firstKeyFrame - currentFrame)%cycleDuration +  firstKeyFrame, 0);
+                return this.getValueAtTime((cycleDuration - (firstKeyFrame - currentFrame) % cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
             }
         }.bind(this);
 
@@ -11337,12 +12391,12 @@ var ExpressionManager = (function(){
                 if(type === 'pingpong') {
                     var iterations = Math.floor((currentFrame - firstKeyFrame)/cycleDuration);
                     if(iterations % 2 !== 0){
-                        return this.getValueAtTime(cycleDuration - (currentFrame - firstKeyFrame)%cycleDuration +  firstKeyFrame, 0);
+                        return this.getValueAtTime((cycleDuration - (currentFrame - firstKeyFrame) % cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
                     }
                 } else if(type === 'offset'){
-                    var initV = this.getValueAtTime(firstKeyFrame, 0);
-                    var endV = this.getValueAtTime(lastKeyFrame, 0);
-                    var current = this.getValueAtTime((currentFrame - firstKeyFrame)%cycleDuration +  firstKeyFrame, 0);
+                    var initV = this.getValueAtTime(firstKeyFrame / this.comp.globalData.frameRate, 0);
+                    var endV = this.getValueAtTime(lastKeyFrame / this.comp.globalData.frameRate, 0);
+                    var current = this.getValueAtTime(((currentFrame - firstKeyFrame) % cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
                     var repeats = Math.floor((currentFrame - firstKeyFrame)/cycleDuration);
                     if(this.pv.length){
                         ret = new Array(initV.length);
@@ -11354,19 +12408,19 @@ var ExpressionManager = (function(){
                     }
                     return (endV-initV)*repeats + current;
                 } else if(type === 'continue'){
-                    var lastValue = this.getValueAtTime(lastKeyFrame, 0);
-                    var nextLastValue = this.getValueAtTime(lastKeyFrame - 0.001, 0);
+                    var lastValue = this.getValueAtTime(lastKeyFrame / this.comp.globalData.frameRate, 0);
+                    var nextLastValue = this.getValueAtTime((lastKeyFrame - 0.001) / this.comp.globalData.frameRate, 0);
                     if(this.pv.length){
                         ret = new Array(lastValue.length);
                         len = ret.length;
                         for(i=0;i<len;i+=1){
-                            ret[i] = lastValue[i] + (lastValue[i]-nextLastValue[i])*(currentFrame - lastKeyFrame)/0.0005;
+                            ret[i] = lastValue[i] + (lastValue[i]-nextLastValue[i])*((currentFrame - lastKeyFrame)/ this.comp.globalData.frameRate)/0.0005;
                         }
                         return ret;
                     }
-                    return lastValue + (lastValue-nextLastValue)*(currentFrame - lastKeyFrame)/0.0005;
+                    return lastValue + (lastValue-nextLastValue)*(((currentFrame - lastKeyFrame))/0.001);
                 }
-                return this.getValueAtTime((currentFrame - firstKeyFrame)%cycleDuration +  firstKeyFrame, 0);
+                return this.getValueAtTime(((currentFrame - firstKeyFrame) % cycleDuration +  firstKeyFrame) / this.comp.globalData.frameRate, 0);
             }
         }.bind(this);
         var loop_out = loopOut;
@@ -11376,12 +12430,13 @@ var ExpressionManager = (function(){
         }.bind(this);
 
         var valueAtTime = function valueAtTime(t) {
-            return this.getValueAtTime(t*elem.comp.globalData.frameRate, 0);
+            return this.getValueAtTime(t, 0);
         }.bind(this);
 
-        var velocityAtTime = function velocityAtTime(t) {
-            return this.getVelocityAtTime(t);
-        }.bind(this);
+        var velocityAtTime;
+        if(this.getVelocityAtTime) {
+            velocityAtTime = this.getVelocityAtTime.bind(this);
+        }
 
         var comp = elem.comp.globalData.projectInterface.bind(elem.comp.globalData.projectInterface);
 
@@ -11390,11 +12445,11 @@ var ExpressionManager = (function(){
             var pitch = Math.atan2(fVec[0],Math.sqrt(fVec[1]*fVec[1]+fVec[2]*fVec[2]))/degToRads;
             var yaw = -Math.atan2(fVec[1],fVec[2])/degToRads;
             return [yaw,pitch,0];
-        }
+        };
 
         function easeOut(t, val1, val2){
             return -(val2-val1) * t*(t-2) + val1;
-        }
+        };
 
         function nearestKey(time){
             var i, len = data.k.length,index,keyTime;
@@ -11404,111 +12459,95 @@ var ExpressionManager = (function(){
             } else {
                 index = -1;
                 time *= elem.comp.globalData.frameRate;
-                for(i=0;i<len-1;i+=1){
-                    if(time === data.k[i].t){
-                        index = i + 1;
-                        keyTime = data.k[i].t;
-                        break;
-                    }else if(time>data.k[i].t && time<data.k[i+1].t){
-                        if(time-data.k[i].t > data.k[i+1].t - time){
-                            index = i + 2;
-                            keyTime = data.k[i+1].t;
-                        } else {
+                if (time < data.k[0].t) {
+                    index = 1;
+                    keyTime = data.k[0].t;
+                } else {
+                    for(i=0;i<len-1;i+=1){
+                        if(time === data.k[i].t){
                             index = i + 1;
                             keyTime = data.k[i].t;
+                            break;
+                        }else if(time>data.k[i].t && time<data.k[i+1].t){
+                            if(time-data.k[i].t > data.k[i+1].t - time){
+                                index = i + 2;
+                                keyTime = data.k[i+1].t;
+                            } else {
+                                index = i + 1;
+                                keyTime = data.k[i].t;
+                            }
+                            break;
                         }
-                        break;
+                    }
+                    if(index === -1){
+                        index = i + 1;
+                        keyTime = data.k[i].t;
                     }
                 }
-                if(index === -1){
-                    index = i + 1;
-                    keyTime = data.k[i].t;
-                }
+                
             }
             var ob = {};
             ob.index = index;
             ob.time = keyTime/elem.comp.globalData.frameRate;
             return ob;
-        }
+        };
 
         function key(ind){
+            var ob, i, len;
             if(!data.k.length || typeof(data.k[0]) === 'number'){
-                return {time:0};
+                throw new Error('The property has no keyframe at index ' + ind);
             }
             ind -= 1;
-            var ob = {
+            ob = {
                 time: data.k[ind].t/elem.comp.globalData.frameRate
             };
             var arr;
-            if(ind === data.k.length - 1){
+            if(ind === data.k.length - 1 && !data.k[ind].h){
                 arr = data.k[ind-1].e;
             }else{
                 arr = data.k[ind].s;
             }
-            var i, len = arr.length;
+            len = arr.length;
             for(i=0;i<len;i+=1){
                 ob[i] = arr[i];
             }
             return ob;
-        }
+        };
 
         function framesToTime(frames,fps){
             if(!fps){
                 fps = elem.comp.globalData.frameRate;
             }
             return frames/fps;
-        }
+        };
 
         function timeToFrames(t,fps){
-            if(!t){
+            if(!t && t !== 0){
                 t = time;
             }
             if(!fps){
                 fps = elem.comp.globalData.frameRate;
             }
             return t*fps;
-        }
-
-        var toworldMatrix = new Matrix();
-        function toWorld(arr){
-            toworldMatrix.reset();
-            elem.finalTransform.mProp.applyToMatrix(toworldMatrix);
-            if(elem.hierarchy && elem.hierarchy.length){
-                var i, len = elem.hierarchy.length;
-                for(i=0;i<len;i+=1){
-                    elem.hierarchy[i].finalTransform.mProp.applyToMatrix(toworldMatrix);
-                }
-                return toworldMatrix.applyToPointArray(arr[0],arr[1],arr[2]||0);
-            }
-            return toworldMatrix.applyToPointArray(arr[0],arr[1],arr[2]||0);
-        }
-
-        var fromworldMatrix = new Matrix();
-        function fromWorld(arr){
-            fromworldMatrix.reset();
-            var pts = [];
-            pts.push(arr);
-            elem.finalTransform.mProp.applyToMatrix(fromworldMatrix);
-            if(elem.hierarchy && elem.hierarchy.length){
-                var i, len = elem.hierarchy.length;
-                for(i=0;i<len;i+=1){
-                    elem.hierarchy[i].finalTransform.mProp.applyToMatrix(fromworldMatrix);
-                }
-                return fromworldMatrix.inversePoints(pts)[0];
-            }
-            return fromworldMatrix.inversePoints(pts)[0];
-        }
+        };
 
         function seedRandom(seed){
             BMMath.seedrandom(randSeed + seed);
         };
 
-        var time,velocity, value,textIndex,textTotal,selectorValue, index = elem.data.ind + 1;
+        function sourceRectAtTime() {
+            return elem.sourceRectAtTime();
+        }
+
+        var time,velocity, value,textIndex,textTotal,selectorValue;
+        var index = elem.data.ind;
         var hasParent = !!(elem.hierarchy && elem.hierarchy.length);
         var parent;
         var randSeed = Math.floor(Math.random()*1000000);
         function execute(){
-            seedRandom(randSeed);
+            if(_needsRandom){
+                seedRandom(randSeed);
+            }
             if(this.frameExpressionId === elem.globalData.frameId && this.type !== 'textSelector'){
                 return;
             }
@@ -11524,10 +12563,14 @@ var ExpressionManager = (function(){
             if(!thisLayer){
                 thisLayer = elem.layerInterface;
                 thisComp = elem.comp.compInterface;
+                toWorld = thisLayer.toWorld.bind(thisLayer);
+                fromWorld = thisLayer.fromWorld.bind(thisLayer);
             }
             if(!transform){
                 transform = elem.layerInterface("ADBE Transform Group");
+                anchorPoint = transform.anchorPoint;
             }
+            
             if(elemType === 4 && !content){
                 content = thisLayer("ADBE Root Vectors Group");
             }
@@ -11536,7 +12579,7 @@ var ExpressionManager = (function(){
             }
             hasParent = !!(elem.hierarchy && elem.hierarchy.length);
             if(hasParent && !parent){
-                parent = elem.hierarchy[elem.hierarchy.length - 1].layerInterface;
+                parent = elem.hierarchy[0].layerInterface;
             }
             this.lock = true;
             if(this.getPreValue){
@@ -11551,8 +12594,10 @@ var ExpressionManager = (function(){
             this.frameExpressionId = elem.globalData.frameId;
             var i,len;
             if(this.mult){
-                if(typeof this.v === 'number' || typeof this.v === 'string'){
+                if(typeof this.v === 'number' || this.v instanceof Number || typeof this.v === 'string'){
                     this.v *= this.mult;
+                }else if(this.v.length === 1){
+                    this.v = this.v[0] * this.mult;
                 }else{
                     len = this.v.length;
                     if(value === this.v){
@@ -11563,23 +12608,21 @@ var ExpressionManager = (function(){
                     }
                 }
             }
-
-            /*if(!this.v){
-                console.log(val);
-            }*/
-            if(typeof this.v === 'number' || typeof this.v === 'string'){
+            if(this.v.length === 1){
+                this.v = this.v[0];
+            }
+            if(typeof this.v === 'number' || this.v instanceof Number || typeof this.v === 'string'){
                 if(this.lastValue !== this.v){
                     this.lastValue = this.v;
                     this.mdf = true;
                 }
-            }else if(this.v.i){
-                // Todo Improve validation for masks and shapes
-                this.mdf = true;
-                this.paths.length = 0;
-                this.paths[0] = this.v;
+            }else if(this.v._length){
+                if(!shapesEqual(this.v,this.localShapeCollection.shapes[0])){
+                    this.mdf = true;
+                    this.localShapeCollection.releaseShapes();
+                    this.localShapeCollection.addShape(shape_pool.clone(this.v));
+                }
             }else{
-                /*if(!this.lastValue){
-                }*/
                 len = this.v.length;
                 for(i = 0; i < len; i += 1){
                     if(this.v[i] !== this.lastValue[i]){
@@ -11591,7 +12634,7 @@ var ExpressionManager = (function(){
             this.lock = false;
         }
         return execute;
-    }
+    };
 
     ob.initiateExpression = initiateExpression;
     return ob;
@@ -11607,6 +12650,7 @@ var ShapeExpressionInterface = (function(){
         createStarInterface:createStarInterface,
         createRectInterface:createRectInterface,
         createRoundedInterface:createRoundedInterface,
+        createRepatearInterface:createRepatearInterface,
         createPathInterface:createPathInterface,
         createFillInterface:createFillInterface
     };
@@ -11640,6 +12684,9 @@ var ShapeExpressionInterface = (function(){
     function createRoundedInterface(shape,view,propertyGroup){
         return roundedInterfaceFactory(shape,view,propertyGroup);
     }
+    function createRepatearInterface(shape,view,propertyGroup){
+        return repeaterInterfaceFactory(shape,view,propertyGroup);
+    }
     function createPathInterface(shape,view,propertyGroup){
         return pathInterfaceFactory(shape,view,propertyGroup);
     }
@@ -11668,6 +12715,8 @@ var ShapeExpressionInterface = (function(){
                 arr.push(ShapeExpressionInterface.createRectInterface(shapes[i],view[i],propertyGroup));
             } else if(shapes[i].ty == 'rd'){
                 arr.push(ShapeExpressionInterface.createRoundedInterface(shapes[i],view[i],propertyGroup));
+            } else if(shapes[i].ty == 'rp'){
+                arr.push(ShapeExpressionInterface.createRepatearInterface(shapes[i],view[i],propertyGroup));
             } else{
                 //console.log(shapes[i].ty);
             }
@@ -11701,16 +12750,16 @@ var ShapeExpressionInterface = (function(){
        return function(shape,view, propertyGroup){
            var interfaces;
            var interfaceFunction = function _interfaceFunction(value){
-               if(typeof value === 'number'){
-                   return interfaces[value-1];
-               }
                var i = 0, len = interfaces.length;
-               while(i<len){
-                   if(interfaces[i]._name === value || interfaces[i].mn === value){
+                while(i<len){
+                    if(interfaces[i]._name === value || interfaces[i].mn === value || interfaces[i].propertyIndex === value || interfaces[i].ix === value || interfaces[i].ind === value){
                        return interfaces[i];
-                   }
-                   i+=1;
-               }
+                    }
+                    i+=1;
+                }
+                if(typeof value === 'number'){
+                   return interfaces[value-1];
+                }
            };
            interfaceFunction.propertyGroup = function(val){
                if(val === 1){
@@ -11721,6 +12770,7 @@ var ShapeExpressionInterface = (function(){
            };
            interfaces = iterateElements(shape.it, view.it, interfaceFunction.propertyGroup);
            interfaceFunction.numProperties = interfaces.length;
+           interfaceFunction.propertyIndex = shape.cix;
 
            return interfaceFunction;
        }
@@ -11731,6 +12781,7 @@ var ShapeExpressionInterface = (function(){
             var interfaceFunction = function _interfaceFunction(value){
                 switch(value){
                     case 'ADBE Vectors Group':
+                    case 'Contents':
                     case 2:
                         return interfaceFunction.content;
                     case 'ADBE Vector Transform Group':
@@ -11778,7 +12829,8 @@ var ShapeExpressionInterface = (function(){
                 }
             });
             //interfaceFunction.content = interfaceFunction;
-            interfaceFunction.numProperties = 1;
+            interfaceFunction.numProperties = shape.np;
+            interfaceFunction.propertyIndex = shape.ix;
             interfaceFunction.nm = shape.nm;
             interfaceFunction.mn = shape.mn;
             return interfaceFunction;
@@ -11788,25 +12840,29 @@ var ShapeExpressionInterface = (function(){
     var fillInterfaceFactory = (function(){
         return function(shape,view,propertyGroup){
 
+            function interfaceFunction(val){
+                if(val === 'Color' || val === 'color'){
+                    return interfaceFunction.color;
+                } else if(val === 'Opacity' || val === 'opacity'){
+                    return interfaceFunction.opacity;
+                }
+            }
+            Object.defineProperty(interfaceFunction, 'color', {
+                get: function(){
+                    return ExpressionValue(view.c, 1 / view.c.mult, 'color');
+                }
+            });
+            Object.defineProperty(interfaceFunction, 'opacity', {
+                get: function(){
+                    return ExpressionValue(view.o, 100);
+                }
+            });
+            Object.defineProperty(interfaceFunction, '_name', { value: shape.nm });
+            Object.defineProperty(interfaceFunction, 'mn', { value: shape.mn });
+
             view.c.setGroupProperty(propertyGroup);
             view.o.setGroupProperty(propertyGroup);
-            var ob = {
-                get color(){
-                    if(view.c.k){
-                        view.c.getValue();
-                    }
-                    return [view.c.v[0]/view.c.mult,view.c.v[1]/view.c.mult,view.c.v[2]/view.c.mult,1];
-                },
-                get opacity(){
-                    if(view.o.k){
-                        view.o.getValue();
-                    }
-                    return view.o.v;
-                },
-                _name: shape.nm,
-                mn: shape.mn
-            };
-            return ob;
+            return interfaceFunction;
         }
     }());
 
@@ -11819,46 +12875,63 @@ var ShapeExpressionInterface = (function(){
                     return propertyGroup(val-1);
                 }
             };
+            function _dashPropertyGroup(val){
+                if(val === 1){
+                    return dashOb;
+                } else{
+                    return _propertyGroup(val-1);
+                }
+            };
+            function addPropertyToDashOb(i) {
+                Object.defineProperty(dashOb, shape.d[i].nm, {
+                    get: function(){
+                        return ExpressionValue(view.d.dataProps[i].p)
+                    }
+                });
+            }
+            var i, len = shape.d ? shape.d.length : 0;
+            var dashOb = {}
+            for (i = 0; i < len; i += 1) {
+                addPropertyToDashOb(i);
+                view.d.dataProps[i].p.setGroupProperty(_dashPropertyGroup);
+            }
+
+            function interfaceFunction(val){
+                if(val === 'Color' || val === 'color'){
+                    return interfaceFunction.color;
+                } else if(val === 'Opacity' || val === 'opacity'){
+                    return interfaceFunction.opacity;
+                } else if(val === 'Stroke Width' || val === 'stroke width'){
+                    return interfaceFunction.strokeWidth;
+                }
+            }
+            Object.defineProperty(interfaceFunction, 'color', {
+                get: function(){
+                    return ExpressionValue(view.c, 1 / view.c.mult, 'color');
+                }
+            });
+            Object.defineProperty(interfaceFunction, 'opacity', {
+                get: function(){
+                    return ExpressionValue(view.o, 100);
+                }
+            });
+            Object.defineProperty(interfaceFunction, 'strokeWidth', {
+                get: function(){
+                    return ExpressionValue(view.w);
+                }
+            });
+            Object.defineProperty(interfaceFunction, 'dash', {
+                get: function(){
+                    return dashOb;
+                }
+            });
+            Object.defineProperty(interfaceFunction, '_name', { value: shape.nm });
+            Object.defineProperty(interfaceFunction, 'mn', { value: shape.mn });
+
             view.c.setGroupProperty(_propertyGroup);
             view.o.setGroupProperty(_propertyGroup);
             view.w.setGroupProperty(_propertyGroup);
-            var ob = {
-                get color(){
-                    if(view.c.k){
-                        view.c.getValue();
-                    }
-                    return [view.c.v[0]/view.c.mult,view.c.v[1]/view.c.mult,view.c.v[2]/view.c.mult,1];
-                },
-                get opacity(){
-                    if(view.o.k){
-                        view.o.getValue();
-                    }
-                    return view.o.v;
-                },
-                get strokeWidth(){
-                    if(view.w.k){
-                        view.w.getValue();
-                    }
-                    return view.w.v;
-                },
-                dashOb: {},
-                get dash(){
-                    var d = view.d;
-                    var dModels = shape.d;
-                    var i, len = dModels.length;
-                    for(i=0;i<len;i+=1){
-                        if(d.dataProps[i].p.k){
-                            d.dataProps[i].p.getValue();
-                        }
-                        d.dataProps[i].p.setGroupProperty(propertyGroup);
-                        this.dashOb[dModels[i].nm] = d.dataProps[i].p.v;
-                    }
-                    return this.dashOb;
-                },
-                _name: shape.nm,
-                mn: shape.mn
-            };
-            return ob;
+            return interfaceFunction;
         }
     }());
 
@@ -11878,7 +12951,7 @@ var ShapeExpressionInterface = (function(){
             view.o.setGroupProperty(_propertyGroup);
 
             function interfaceFunction(val){
-                if(val === shape.e.ix){
+                if(val === shape.e.ix || val === 'End' || val === 'end'){
                     return interfaceFunction.end;
                 }
                 if(val === shape.s.ix){
@@ -11891,26 +12964,17 @@ var ShapeExpressionInterface = (function(){
             interfaceFunction.propertyIndex = shape.ix;
             Object.defineProperty(interfaceFunction, 'start', {
                 get: function(){
-                    if(view.s.k){
-                        view.s.getValue();
-                    }
-                    return view.s.v/view.s.mult;
+                    return ExpressionValue(view.s, 1 / view.s.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'end', {
                 get: function(){
-                    if(view.e.k){
-                        view.e.getValue();
-                    }
-                    return view.e.v/view.e.mult;
+                    return ExpressionValue(view.e, 1 / view.e.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'offset', {
                 get: function(){
-                    if(view.o.k){
-                        view.o.getValue();
-                    }
-                    return view.o.v;
+                    return ExpressionValue(view.o);
                 }
             });
             Object.defineProperty(interfaceFunction, '_name', {
@@ -11977,7 +13041,7 @@ var ShapeExpressionInterface = (function(){
                 if(value === 'Scale') {
                     return interfaceFunction.scale;
                 }
-                if(value === 'Rotation') {
+                if(value === 'Rotation' || value === 'ADBE Vector Rotation') {
                     return interfaceFunction.rotation;
                 }
                 if(value === 'Skew') {
@@ -11990,61 +13054,38 @@ var ShapeExpressionInterface = (function(){
             }
             Object.defineProperty(interfaceFunction, 'opacity', {
                 get: function(){
-                    if(view.transform.mProps.o.k){
-                        view.transform.mProps.o.getValue();
-                    }
-                    return view.transform.mProps.o.v/view.transform.mProps.o.mult;
+                    return ExpressionValue(view.transform.mProps.o, 1/view.transform.mProps.o.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'position', {
                 get: function(){
-                    if(view.transform.mProps.p.k){
-                        view.transform.mProps.p.getValue();
-                    }
-                    return [view.transform.mProps.p.v[0],view.transform.mProps.p.v[1]];
+                    return ExpressionValue(view.transform.mProps.p);
                 }
             });
             Object.defineProperty(interfaceFunction, 'anchorPoint', {
                 get: function(){
-                    if(view.transform.mProps.a.k){
-                        view.transform.mProps.a.getValue();
-                    }
-                    return [view.transform.mProps.a.v[0],view.transform.mProps.a.v[1]];
+                    return ExpressionValue(view.transform.mProps.a);
                 }
             });
             var scaleArray = [];
             Object.defineProperty(interfaceFunction, 'scale', {
                 get: function(){
-                    if(view.transform.mProps.s.k){
-                        view.transform.mProps.s.getValue();
-                    }
-                    scaleArray[0] = view.transform.mProps.s.v[0]/view.transform.mProps.s.mult;
-                    scaleArray[1] = view.transform.mProps.s.v[1]/view.transform.mProps.s.mult;
-                    return scaleArray;
+                    return ExpressionValue(view.transform.mProps.s, 1 / view.transform.mProps.s.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'rotation', {
                 get: function(){
-                    if(view.transform.mProps.r.k){
-                        view.transform.mProps.r.getValue();
-                    }
-                    return view.transform.mProps.r.v/view.transform.mProps.r.mult;
+                    return ExpressionValue(view.transform.mProps.r, 1 / view.transform.mProps.r.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'skew', {
                 get: function(){
-                    if(view.transform.mProps.sk.k){
-                        view.transform.mProps.sk.getValue();
-                    }
-                    return view.transform.mProps.sk.v;
+                    return ExpressionValue(view.transform.mProps.sk);
                 }
             });
             Object.defineProperty(interfaceFunction, 'skewAxis', {
                 get: function(){
-                    if(view.transform.mProps.sa.k){
-                        view.transform.mProps.sa.getValue();
-                    }
-                    return view.transform.mProps.sa.v;
+                    return ExpressionValue(view.transform.mProps.sa);
                 }
             });
             Object.defineProperty(interfaceFunction, '_name', {
@@ -12081,18 +13122,12 @@ var ShapeExpressionInterface = (function(){
             }
             Object.defineProperty(interfaceFunction, 'size', {
                 get: function(){
-                    if(prop.s.k){
-                        prop.s.getValue();
-                    }
-                    return [prop.s.v[0],prop.s.v[1]];
+                    return ExpressionValue(prop.s);
                 }
             });
             Object.defineProperty(interfaceFunction, 'position', {
                 get: function(){
-                    if(prop.p.k){
-                        prop.p.getValue();
-                    }
-                    return [prop.p.v[0],prop.p.v[1]];
+                    return ExpressionValue(prop.p);
                 }
             });
             Object.defineProperty(interfaceFunction, '_name', {
@@ -12152,42 +13187,27 @@ var ShapeExpressionInterface = (function(){
             }
             Object.defineProperty(interfaceFunction, 'position', {
                 get: function(){
-                    if(prop.p.k){
-                        prop.p.getValue();
-                    }
-                    return prop.p.v;
+                    return ExpressionValue(prop.p);
                 }
             });
             Object.defineProperty(interfaceFunction, 'rotation', {
                 get: function(){
-                    if(prop.r.k){
-                        prop.r.getValue();
-                    }
-                    return prop.r.v/prop.r.mult;
+                    return ExpressionValue(prop.r, 1 / prop.r.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, 'points', {
                 get: function(){
-                    if(prop.pt.k){
-                        prop.pt.getValue();
-                    }
-                    return prop.pt.v;
+                    return ExpressionValue(prop.pt);
                 }
             });
             Object.defineProperty(interfaceFunction, 'outerRadius', {
                 get: function(){
-                    if(prop.or.k){
-                        prop.or.getValue();
-                    }
-                    return prop.or.v;
+                    return ExpressionValue(prop.or);
                 }
             });
             Object.defineProperty(interfaceFunction, 'outerRoundness', {
                 get: function(){
-                    if(prop.os.k){
-                        prop.os.getValue();
-                    }
-                    return prop.os.v/prop.os.mult;
+                    return ExpressionValue(prop.os);
                 }
             });
             Object.defineProperty(interfaceFunction, 'innerRadius', {
@@ -12195,10 +13215,7 @@ var ShapeExpressionInterface = (function(){
                     if(!prop.ir){
                         return 0;
                     }
-                    if(prop.ir.k){
-                        prop.ir.getValue();
-                    }
-                    return prop.ir.v;
+                    return ExpressionValue(prop.ir);
                 }
             });
             Object.defineProperty(interfaceFunction, 'innerRoundness', {
@@ -12206,10 +13223,7 @@ var ShapeExpressionInterface = (function(){
                     if(!prop.is){
                         return 0;
                     }
-                    if(prop.is.k){
-                        prop.is.getValue();
-                    }
-                    return prop.is.v/prop.is.mult;
+                    return ExpressionValue(prop.is, 1 / prop.is.mult);
                 }
             });
             Object.defineProperty(interfaceFunction, '_name', {
@@ -12242,47 +13256,26 @@ var ShapeExpressionInterface = (function(){
                     return interfaceFunction.position;
                 }
                 if(shape.r.ix === value){
-                    return interfaceFunction.rotation;
+                    return interfaceFunction.roundness;
                 }
-                if(shape.pt.ix === value){
-                    return interfaceFunction.points;
-                }
-                if(shape.or.ix === value || 'ADBE Vector Star Outer Radius' === value){
-                    return interfaceFunction.outerRadius;
-                }
-                if(shape.os.ix === value){
-                    return interfaceFunction.outerRoundness;
-                }
-                if(shape.ir && (shape.ir.ix === value || 'ADBE Vector Star Inner Radius' === value)){
-                    return interfaceFunction.innerRadius;
-                }
-                if(shape.is && shape.is.ix === value){
-                    return interfaceFunction.innerRoundness;
+                if(shape.s.ix === value || value === 'Size'){
+                    return interfaceFunction.size;
                 }
 
             }
             Object.defineProperty(interfaceFunction, 'position', {
                 get: function(){
-                    if(prop.p.k){
-                        prop.p.getValue();
-                    }
-                    return prop.p.v;
+                    return ExpressionValue(prop.p);
                 }
             });
             Object.defineProperty(interfaceFunction, 'roundness', {
                 get: function(){
-                    if(prop.r.k){
-                        prop.r.getValue();
-                    }
-                    return prop.r.v;
+                    return ExpressionValue(prop.r);
                 }
             });
             Object.defineProperty(interfaceFunction, 'size', {
                 get: function(){
-                    if(prop.s.k){
-                        prop.s.getValue();
-                    }
-                    return prop.s.v;
+                    return ExpressionValue(prop.s);
                 }
             });
 
@@ -12317,10 +13310,51 @@ var ShapeExpressionInterface = (function(){
             }
             Object.defineProperty(interfaceFunction, 'radius', {
                 get: function(){
-                    if(prop.rd.k){
-                        prop.rd.getValue();
-                    }
-                    return prop.rd.v;
+                    return ExpressionValue(prop.rd);
+                }
+            });
+
+            Object.defineProperty(interfaceFunction, '_name', {
+                get: function(){
+                    return shape.nm;
+                }
+            });
+            interfaceFunction.mn = shape.mn;
+            return interfaceFunction;
+        }
+    }());
+
+    var repeaterInterfaceFactory = (function(){
+        return function(shape,view,propertyGroup){
+            function _propertyGroup(val){
+                if(val == 1){
+                    return interfaceFunction;
+                } else {
+                    return propertyGroup(--val);
+                }
+            }
+            var prop = view;
+            interfaceFunction.propertyIndex = shape.ix;
+            prop.c.setGroupProperty(_propertyGroup);
+            prop.o.setGroupProperty(_propertyGroup);
+
+            function interfaceFunction(value){
+                if(shape.c.ix === value || 'Copies' === value){
+                    return interfaceFunction.copies;
+                } else if(shape.o.ix === value || 'Offset' === value){
+                    return interfaceFunction.offset;
+                }
+
+            }
+            Object.defineProperty(interfaceFunction, 'copies', {
+                get: function(){
+                    return ExpressionValue(prop.c);
+                }
+            });
+
+            Object.defineProperty(interfaceFunction, 'offset', {
+                get: function(){
+                    return ExpressionValue(prop.o);
                 }
             });
 
@@ -12337,24 +13371,42 @@ var ShapeExpressionInterface = (function(){
     var pathInterfaceFactory = (function(){
         return function(shape,view,propertyGroup){
             var prop = view.sh.ty === 'tm' ? view.sh.prop : view.sh;
-            prop.setGroupProperty(propertyGroup);
-            var ob = {
-                get shape(){
-                    if(prop.k){
-                        prop.getValue();
-                    }
-                    return prop.v;
-                },
-                get path(){
-                    if(prop.k){
-                        prop.getValue();
-                    }
-                    return prop.v;
-                },
-                _name: shape.nm,
-                mn: shape.mn
+            function _propertyGroup(val){
+                if(val == 1){
+                    return interfaceFunction;
+                } else {
+                    return propertyGroup(--val);
+                }
             }
-            return ob;
+            prop.setGroupProperty(_propertyGroup);
+
+            function interfaceFunction(val){
+                if(val === 'Shape' || val === 'shape' || val === 'Path' || val === 'path' || val === 2){
+                    return interfaceFunction.path;
+                }
+            }
+            Object.defineProperty(interfaceFunction, 'path', {
+                get: function(){
+                    if(prop.k){
+                        prop.getValue();
+                    }
+                    return prop.v;
+                    //return shape_pool.clone(prop.v);
+                }
+            });
+            Object.defineProperty(interfaceFunction, 'shape', {
+                get: function(){
+                    if(prop.k){
+                        prop.getValue();
+                    }
+                    return prop.v;
+                    //return shape_pool.clone(prop.v);
+                }
+            });
+            Object.defineProperty(interfaceFunction, '_name', { value: shape.nm });
+            Object.defineProperty(interfaceFunction, 'ix', { value: shape.ix });
+            Object.defineProperty(interfaceFunction, 'mn', { value: shape.mn });
+            return interfaceFunction;
         }
     }());
 
@@ -12362,11 +13414,34 @@ var ShapeExpressionInterface = (function(){
     return ob;
 }())
 
+var TextExpressionInterface = (function(){
+	return function(elem){
+        function _thisLayerFunction(){
+        }
+        Object.defineProperty(_thisLayerFunction, "sourceText", {
+            get: function(){
+            	if(!elem.currentTextDocumentData.t) {
+            		return ''
+            	}
+                return elem.currentTextDocumentData.t;
+            }
+        });
+        return _thisLayerFunction;
+    }
+}())
 var LayerExpressionInterface = (function (){
-    function toWorld(arr){
+    function toWorld(arr, time){
         var toWorldMat = new Matrix();
         toWorldMat.reset();
-        this._elem.finalTransform.mProp.applyToMatrix(toWorldMat);
+        var transformMat;
+        if(time) {
+            //Todo implement value at time on transform properties
+            //transformMat = this._elem.finalTransform.mProp.getValueAtTime(time);
+            transformMat = this._elem.finalTransform.mProp;
+        } else {
+            transformMat = this._elem.finalTransform.mProp;
+        }
+        transformMat.applyToMatrix(toWorldMat);
         if(this._elem.hierarchy && this._elem.hierarchy.length){
             var i, len = this._elem.hierarchy.length;
             for(i=0;i<len;i+=1){
@@ -12375,6 +13450,40 @@ var LayerExpressionInterface = (function (){
             return toWorldMat.applyToPointArray(arr[0],arr[1],arr[2]||0);
         }
         return toWorldMat.applyToPointArray(arr[0],arr[1],arr[2]||0);
+    }
+    function fromWorld(arr, time){
+        var toWorldMat = new Matrix();
+        toWorldMat.reset();
+        var transformMat;
+        if(time) {
+            //Todo implement value at time on transform properties
+            //transformMat = this._elem.finalTransform.mProp.getValueAtTime(time);
+            transformMat = this._elem.finalTransform.mProp;
+        } else {
+            transformMat = this._elem.finalTransform.mProp;
+        }
+        transformMat.applyToMatrix(toWorldMat);
+        if(this._elem.hierarchy && this._elem.hierarchy.length){
+            var i, len = this._elem.hierarchy.length;
+            for(i=0;i<len;i+=1){
+                this._elem.hierarchy[i].finalTransform.mProp.applyToMatrix(toWorldMat);
+            }
+            return toWorldMat.inversePoint(arr);
+        }
+        return toWorldMat.inversePoint(arr);
+    }
+    function fromComp(arr){
+        var toWorldMat = new Matrix();
+        toWorldMat.reset();
+        this._elem.finalTransform.mProp.applyToMatrix(toWorldMat);
+        if(this._elem.hierarchy && this._elem.hierarchy.length){
+            var i, len = this._elem.hierarchy.length;
+            for(i=0;i<len;i+=1){
+                this._elem.hierarchy[i].finalTransform.mProp.applyToMatrix(toWorldMat);
+            }
+            return toWorldMat.inversePoint(arr);
+        }
+        return toWorldMat.inversePoint(arr);
     }
 
 
@@ -12392,9 +13501,11 @@ var LayerExpressionInterface = (function (){
         function _thisLayerFunction(name){
             switch(name){
                 case "ADBE Root Vectors Group":
+                case "Contents":
                 case 2:
                     return _thisLayerFunction.shapeInterface;
                 case 1:
+                case 6:
                 case "Transform":
                 case "transform":
                 case "ADBE Transform Group":
@@ -12405,7 +13516,10 @@ var LayerExpressionInterface = (function (){
             }
         }
         _thisLayerFunction.toWorld = toWorld;
+        _thisLayerFunction.fromWorld = fromWorld;
         _thisLayerFunction.toComp = toWorld;
+        _thisLayerFunction.fromComp = fromComp;
+        _thisLayerFunction.sourceRectAtTime = elem.sourceRectAtTime.bind(elem);
         _thisLayerFunction._elem = elem;
         Object.defineProperty(_thisLayerFunction, 'hasParent', {
             get: function(){
@@ -12445,6 +13559,31 @@ var LayerExpressionInterface = (function (){
                 return transformInterface;
             }
         });
+
+        Object.defineProperty(_thisLayerFunction, "width", {
+            get: function () {
+                if(elem.data.ty === 0) {
+                    return elem.data.w
+                }
+                return 100;
+            }
+        });
+
+        Object.defineProperty(_thisLayerFunction, "height", {
+            get: function () {
+                if(elem.data.ty === 0) {
+                    return elem.data.h
+                }
+                return 100;
+            }
+        });
+
+        Object.defineProperty(_thisLayerFunction, "source", {
+            get: function () {
+                return elem.data.refId;
+            }
+        });
+
         Object.defineProperty(_thisLayerFunction, "_name", { value:elem.data.nm });
         Object.defineProperty(_thisLayerFunction, "content", {
             get: function(){
@@ -12452,7 +13591,18 @@ var LayerExpressionInterface = (function (){
             }
         });
 
-        _thisLayerFunction.active = true;
+        Object.defineProperty(_thisLayerFunction, "active", {
+            get: function(){
+                return elem.isVisible;
+            }
+        });
+
+        Object.defineProperty(_thisLayerFunction, "text", {
+            get: function(){
+                return _thisLayerFunction.textInterface;
+            }
+        });
+
         _thisLayerFunction.registerMaskInterface = _registerMaskInterface;
         _thisLayerFunction.registerEffectsInterface = _registerEffectsInterface;
         return _thisLayerFunction;
@@ -12464,12 +13614,14 @@ var CompExpressionInterface = (function (){
         function _thisLayerFunction(name){
             var i=0, len = comp.layers.length;
             while(i<len){
-                if(comp.layers[i].nm === name || comp.layers[i].ind === name - 1){
+                if(comp.layers[i].nm === name || comp.layers[i].ind === name){
                     return comp.elements[i].layerInterface;
                 }
                 i += 1;
             }
+            return {active:false}
         }
+        Object.defineProperty(_thisLayerFunction, "_name", { value:comp.data.nm });
         _thisLayerFunction.layer = _thisLayerFunction;
         _thisLayerFunction.pixelAspect = 1;
         _thisLayerFunction.height = comp.globalData.compSize.h;
@@ -12486,21 +13638,28 @@ var TransformExpressionInterface = (function (){
                 case "scale":
                 case "Scale":
                 case "ADBE Scale":
+                case 6:
                     return _thisFunction.scale;
                 case "rotation":
                 case "Rotation":
                 case "ADBE Rotation":
+                case "ADBE Rotate Z":
+                case 10:
                     return _thisFunction.rotation;
                 case "position":
                 case "Position":
                 case "ADBE Position":
+                case 2:
                     return transform.position;
                 case "anchorPoint":
                 case "AnchorPoint":
+                case "Anchor Point":
                 case "ADBE AnchorPoint":
+                case 1:
                     return _thisFunction.anchorPoint;
                 case "opacity":
                 case "Opacity":
+                case 11:
                     return _thisFunction.opacity;
             }
         }
@@ -12512,13 +13671,7 @@ var TransformExpressionInterface = (function (){
         });
         Object.defineProperty(_thisFunction, "scale", {
             get: function () {
-                var s = transform.scale;
-                var i, len = s.length;
-                var transformedS = Array.apply(null,{length:len});
-                for(i=0;i<len;i+=1){
-                    transformedS[i] = s[i]*100;
-                }
-                return transformedS;
+                return transform.scale;
             }
         });
 
@@ -12548,7 +13701,7 @@ var TransformExpressionInterface = (function (){
 
         Object.defineProperty(_thisFunction, "opacity", {
             get: function () {
-                return transform.opacity*100;
+                return transform.opacity;
             }
         });
 
@@ -12578,12 +13731,13 @@ var ProjectInterface = (function (){
             var i = 0, len = this.compositions.length;
             while(i<len){
                 if(this.compositions[i].data && this.compositions[i].data.nm === name){
-                    this.compositions[i].prepareFrame(this.currentFrame);
+                    if(this.compositions[i].prepareFrame) {
+                        this.compositions[i].prepareFrame(this.currentFrame);
+                    }
                     return this.compositions[i].compInterface;
                 }
                 i+=1;
             }
-            return this.compositions[0].compInterface;
         }
 
         _thisProjectFunction.compositions = [];
@@ -12635,7 +13789,6 @@ var EffectsExpressionInterface = (function (){
         }
         var groupInterface = function(name){
             var effects = data.ef, i = 0, len = effects.length;
-           // console.log('effects:',effects);
             while(i<len) {
                 if(name === effects[i].nm || name === effects[i].mn || name === effects[i].ix){
                     if(effects[i].ty === 5){
@@ -12648,6 +13801,18 @@ var EffectsExpressionInterface = (function (){
             }
             return effectElements[0]();
         }
+        if(data.mn === 'ADBE Color Control'){
+            Object.defineProperty(groupInterface, 'color', {
+                get: function(){
+                    return effectElements[0]();
+                }
+            });
+        }
+        Object.defineProperty(groupInterface, 'numProperties', {
+            get: function(){
+                return data.np;
+            }
+        });
         groupInterface.active = data.en !== 0;
         return groupInterface
     }
@@ -12657,24 +13822,57 @@ var EffectsExpressionInterface = (function (){
             if(type === 10){
                 return elem.comp.compInterface(element.p.v);
             }
-            if(element.p.k){
-                element.p.getValue();
-            }
-            if(typeof element.p.v === 'number'){
-                return element.p.v;
-            }
-            var i, len = element.p.v.length;
-            var arr = Array.apply(null,{length:len});
-            for(i=0;i<len;i+=1){
-                arr[i] = element.p.v[i];
-            }
-            return arr;
+            return ExpressionValue(element.p);
         }
     }
 
     return ob;
 
 }());
+var ExpressionValue = (function() {
+	return function(elementProp, mult, type) {
+        var expressionValue, arrayValue;
+
+		if (elementProp.k) {
+            elementProp.getValue();
+        }
+        var i, len, arrValue;
+        if (type) {
+        	if(type === 'color') {
+        		len = 4;
+		        expressionValue = Array.apply(null, {length: len});
+		        arrValue = Array.apply(null, {length: len});
+		        for (i = 0; i < len; i += 1) {
+		            expressionValue[i] = arrValue[i] = (mult && i < 3) ? elementProp.v[i] * mult : 1;
+		        }
+	        	expressionValue.value = arrValue;
+        	}
+        } else if (typeof elementProp.v === 'number' || elementProp.v instanceof Number){
+            expressionValue = mult ? new Number(elementProp.v * mult) : new Number(elementProp.v);
+            expressionValue.value = mult ? elementProp.v * mult : elementProp.v;
+        } else {
+        	len = elementProp.v.length;
+	        expressionValue = Array.apply(null, {length: len});
+	        arrValue = Array.apply(null, {length: len});
+	        for (i = 0; i < len; i += 1) {
+	            expressionValue[i] = arrValue[i] = mult ? elementProp.v[i] * mult : elementProp.v[i];
+	        }
+	        expressionValue.value = arrValue;
+        }
+        
+        expressionValue.numKeys = elementProp.keyframes ? elementProp.keyframes.length : 0;
+        expressionValue.key = function(pos) {
+            if (!expressionValue.numKeys) {
+                return 0;
+            } else {
+                return elementProp.keyframes[pos-1].t;
+            }
+        };
+        expressionValue.valueAtTime = elementProp.getValueAtTime;
+        expressionValue.propertyGroup = elementProp.propertyGroup;
+        return expressionValue;
+	}
+}())
 function SliderEffect(data,elem, dynamicProperties){
     this.p = PropertyFactory.getProp(elem,data.v,0,0,dynamicProperties);
 }
@@ -12690,8 +13888,11 @@ function PointEffect(data,elem, dynamicProperties){
 function LayerIndexEffect(data,elem, dynamicProperties){
     this.p = PropertyFactory.getProp(elem,data.v,0,0,dynamicProperties);
 }
+function MaskIndexEffect(data,elem, dynamicProperties){
+    this.p = PropertyFactory.getProp(elem,data.v,0,0,dynamicProperties);
+}
 function CheckboxEffect(data,elem, dynamicProperties){
-    this.p = PropertyFactory.getProp(elem,data.v,1,0,dynamicProperties);
+    this.p = PropertyFactory.getProp(elem,data.v,0,0,dynamicProperties);
 }
 function NoValueEffect(){
     this.p = {};
@@ -12757,6 +13958,10 @@ GroupEffect.prototype.init = function(data,element,dynamicProperties){
                 eff = new LayerIndexEffect(effects[i],element,dynamicProperties);
                 this.effectElements.push(eff);
                 break;
+            case 11:
+                eff = new MaskIndexEffect(effects[i],element,dynamicProperties);
+                this.effectElements.push(eff);
+                break;
             case 5:
                 eff = new EffectsManager(effects[i],element,dynamicProperties);
                 this.effectElements.push(eff);
@@ -12767,4 +13972,172 @@ GroupEffect.prototype.init = function(data,element,dynamicProperties){
                 break;
         }
     }
-};var bodymovinjs = {}; function play(animation){ animationManager.play(animation); } function pause(animation){ animationManager.pause(animation); } function togglePause(animation){ animationManager.togglePause(animation); } function setSpeed(value,animation){ animationManager.setSpeed(value, animation); } function setDirection(value,animation){ animationManager.setDirection(value, animation); } function stop(animation){ animationManager.stop(animation); } function moveFrame(value){ animationManager.moveFrame(value); } function searchAnimations(){ if(standalone === true){ animationManager.searchAnimations(animationData,standalone, renderer); }else{ animationManager.searchAnimations(); } } function registerAnimation(elem){ return animationManager.registerAnimation(elem); } function resize(){ animationManager.resize(); } function start(){ animationManager.start(); } function goToAndStop(val,isFrame, animation){ animationManager.goToAndStop(val,isFrame, animation); } function setSubframeRendering(flag){ subframeEnabled = flag; } function loadAnimation(params){ if(standalone === true){ params.animationData = JSON.parse(animationData); } return animationManager.loadAnimation(params); } function destroy(animation){ return animationManager.destroy(animation); } function setQuality(value){ if(typeof value === 'string'){ switch(value){ case 'high': defaultCurveSegments = 200; break; case 'medium': defaultCurveSegments = 50; break; case 'low': defaultCurveSegments = 10; break; } }else if(!isNaN(value) && value > 1){ defaultCurveSegments = value; } if(defaultCurveSegments >= 50){ roundValues(false); }else{ roundValues(true); } } function installPlugin(type,plugin){ if(type==='expressions'){ expressionsPlugin = plugin; } } function getFactory(name){ switch(name){ case "propertyFactory": return PropertyFactory;case "shapePropertyFactory": return ShapePropertyFactory; case "matrix": return Matrix; } } bodymovinjs.play = play; bodymovinjs.pause = pause; bodymovinjs.togglePause = togglePause; bodymovinjs.setSpeed = setSpeed; bodymovinjs.setDirection = setDirection; bodymovinjs.stop = stop; bodymovinjs.moveFrame = moveFrame; bodymovinjs.searchAnimations = searchAnimations; bodymovinjs.registerAnimation = registerAnimation; bodymovinjs.loadAnimation = loadAnimation; bodymovinjs.setSubframeRendering = setSubframeRendering; bodymovinjs.resize = resize; bodymovinjs.start = start; bodymovinjs.goToAndStop = goToAndStop; bodymovinjs.destroy = destroy; bodymovinjs.setQuality = setQuality; bodymovinjs.installPlugin = installPlugin; bodymovinjs.__getFactory = getFactory; bodymovinjs.version = '4.5.8'; function checkReady(){ if (document.readyState === "complete") { clearInterval(readyStateCheckInterval); searchAnimations(); } } function getQueryVariable(variable) { var vars = queryString.split('&'); for (var i = 0; i < vars.length; i++) { var pair = vars[i].split('='); if (decodeURIComponent(pair[0]) == variable) { return decodeURIComponent(pair[1]); } } } var standalone = '__[STANDALONE]__'; var animationData = '__[ANIMATIONDATA]__'; var renderer = ''; if(standalone) { var scripts = document.getElementsByTagName('script'); var index = scripts.length - 1; var myScript = scripts[index]; var queryString = myScript.src.replace(/^[^\?]+\??/,''); renderer = getQueryVariable('renderer'); } var readyStateCheckInterval = setInterval(checkReady, 100); return bodymovinjs; }));  
+};
+    var bodymovinjs = {};
+
+    function setLocationHref (href) {
+        locationHref = href;
+    }
+    function play(animation){
+        animationManager.play(animation);
+    }
+
+    function pause(animation) {
+        animationManager.pause(animation);
+    }
+
+    function togglePause(animation) {
+        animationManager.togglePause(animation);
+    }
+
+    function setSpeed(value, animation) {
+        animationManager.setSpeed(value, animation);
+    }
+
+    function setDirection(value, animation) {
+        animationManager.setDirection(value, animation);
+    }
+
+    function stop(animation) {
+        animationManager.stop(animation);
+    }
+
+    function moveFrame(value) {
+        animationManager.moveFrame(value);
+    }
+
+    function searchAnimations() {
+        if (standalone === true) {
+            animationManager.searchAnimations(animationData, standalone, renderer);
+        } else {
+            animationManager.searchAnimations();
+        }
+    }
+
+    function registerAnimation(elem) {
+        return animationManager.registerAnimation(elem);
+    }
+
+    function resize() {
+        animationManager.resize();
+    }
+
+    function start() {
+        animationManager.start();
+    }
+
+    function goToAndStop(val, isFrame, animation) {
+        animationManager.goToAndStop(val, isFrame, animation);
+    }
+
+    function setSubframeRendering(flag) {
+        subframeEnabled = flag;
+    }
+
+    function loadAnimation(params) {
+        if (standalone === true) {
+            params.animationData = JSON.parse(animationData);
+        }
+        return animationManager.loadAnimation(params);
+    }
+
+    function destroy(animation) {
+        return animationManager.destroy(animation);
+    }
+
+    function setQuality(value) {
+        if (typeof value === 'string') {
+            switch (value) {
+                case 'high':
+                    defaultCurveSegments = 200;
+                    break;
+                case 'medium':
+                    defaultCurveSegments = 50;
+                    break;
+                case 'low':
+                    defaultCurveSegments = 10;
+                    break;
+            }
+        } else if (!isNaN(value) && value > 1) {
+            defaultCurveSegments = value;
+        }
+        if (defaultCurveSegments >= 50) {
+            roundValues(false);
+        } else {
+            roundValues(true);
+        }
+    }
+
+    function inBrowser() {
+        return typeof navigator !== 'undefined';
+    }
+
+    function installPlugin(type, plugin) {
+        if (type === 'expressions') {
+            expressionsPlugin = plugin;
+        }
+    }
+
+    function getFactory(name) {
+        switch (name) {
+            case "propertyFactory":
+                return PropertyFactory;
+            case "shapePropertyFactory":
+                return ShapePropertyFactory;
+            case "matrix":
+                return Matrix;
+        }
+    }
+    bodymovinjs.play = play;
+    bodymovinjs.pause = pause;
+    bodymovinjs.setLocationHref = setLocationHref;
+    bodymovinjs.togglePause = togglePause;
+    bodymovinjs.setSpeed = setSpeed;
+    bodymovinjs.setDirection = setDirection;
+    bodymovinjs.stop = stop;
+    bodymovinjs.moveFrame = moveFrame;
+    bodymovinjs.searchAnimations = searchAnimations;
+    bodymovinjs.registerAnimation = registerAnimation;
+    bodymovinjs.loadAnimation = loadAnimation;
+    bodymovinjs.setSubframeRendering = setSubframeRendering;
+    bodymovinjs.resize = resize;
+    bodymovinjs.start = start;
+    bodymovinjs.goToAndStop = goToAndStop;
+    bodymovinjs.destroy = destroy;
+    bodymovinjs.setQuality = setQuality;
+    bodymovinjs.inBrowser = inBrowser;
+    bodymovinjs.installPlugin = installPlugin;
+    bodymovinjs.__getFactory = getFactory;
+    bodymovinjs.version = '4.11.1';
+
+    function checkReady() {
+        if (document.readyState === "complete") {
+            clearInterval(readyStateCheckInterval);
+            searchAnimations();
+        }
+    }
+
+    function getQueryVariable(variable) {
+        var vars = queryString.split('&');
+        for (var i = 0; i < vars.length; i++) {
+            var pair = vars[i].split('=');
+            if (decodeURIComponent(pair[0]) == variable) {
+                return decodeURIComponent(pair[1]);
+            }
+        }
+    }
+    var standalone = '__[STANDALONE]__';
+    var animationData = '__[ANIMATIONDATA]__';
+    var renderer = '';
+    if (standalone) {
+        var scripts = document.getElementsByTagName('script');
+        var index = scripts.length - 1;
+        var myScript = scripts[index] || {
+            src: ''
+        };
+        var queryString = myScript.src.replace(/^[^\?]+\??/, '');
+        renderer = getQueryVariable('renderer');
+    }
+    var readyStateCheckInterval = setInterval(checkReady, 100);
+    return bodymovinjs;
+}));

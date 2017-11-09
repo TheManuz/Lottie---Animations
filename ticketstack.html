@@ -8,40 +8,43 @@
             height: 100%;
             overflow-x: hidden;
             overflow-y: auto;
+            cursor: pointer;
         }
 
         #bodymovin{
-            width:320px;
-            height:320px;
+            width:160px;
+            height:160px;
             position: absolute;
             top: 50%;
             left: 50%;
-            margin-top: -160px;
-            margin-left: -160px;
+            margin-top: -80px;
+            margin-left: -80px;
         }
     </style>
     <script src="scripts/bodymovin.min.js"></script>
 </head>
-<body>
-    <div id="qr_code">
-        <div id="round_bg">
-            <div id="bodymovin"></div>
-        </div>
-    </div>
+<body onclick="reverseAnim()">
+    <div id="bodymovin"></div>
 
 
 <script>
-
-    bodymovin.loadAnimation({
+    var forward = 1;
+    anim = bodymovin.loadAnimation({
         container: document.getElementById('bodymovin'),
         renderer: 'svg',
         loop: true,
-        autoplay: true,
+        autoplay: false,
         rendererSettings: {
             progressiveLoad:false
         },
-        path: 'smartphone_authorize_rtc.json'
+        path: 'ticketstack.json'
     });
+    anim.play();
+
+    function reverseAnim() {
+        forward *= -1;
+        anim.setDirection(forward);
+    }
 
 </script>
 </body>
