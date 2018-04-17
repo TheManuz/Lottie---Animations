@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ffffff;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+            cursor: pointer;
+        }
+
+        .annotation{
+            width:80px;
+            height:80px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -80px;
+            margin-left: -40px;
+        }
+    </style>
+    <script src="scripts/lottie.min.js"></script>
+</head>
+<body onclick="animPlay()">
+    <div class="annotation" id="annotation_down" ></div>
+    <div class="annotation" style="display:none;" id="annotation_up"></div>
+
+
+<script>
+    var down = true;
+    var annotation_down = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_down'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'ParkingMarkerDown.json'
+    });
+    var annotation_up = bodymovin.loadAnimation({
+        container: document.getElementById('annotation_up'),
+        renderer: 'svg',
+        loop: false,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'ParkingMarkerUp.json'
+    });
+
+    function animPlay() {
+        if (down) {
+            document.getElementById("annotation_down").style.display = "none";
+            document.getElementById("annotation_up").style.display = "block";
+
+            annotation_up.goToAndPlay(0, false);
+        } else {
+            document.getElementById("annotation_up").style.display = "none";
+            document.getElementById("annotation_down").style.display = "block";
+
+            annotation_down.goToAndPlay(0, false);
+        }
+        down = !down;
+    }
+
+</script>
+</body>
+</html>
