@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <style>
+        body, html{
+            background-color:#ffffff;
+            margin: 0px;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        #bodymovin{
+            width:360px;
+            height:188px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -94px;
+            margin-left: -180px;
+        }
+    </style>
+    <script src="scripts/lottie.min.js"></script>
+</head>
+<body>
+    <div id="qr_code">
+        <div id="bodymovin"></div>
+    </div>
+
+
+<script>
+
+    bodymovin.loadAnimation({
+        container: document.getElementById('bodymovin'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        rendererSettings: {
+            progressiveLoad:false
+        },
+        path: 'app_wizard3_config.json'
+    });
+
+</script>
+</body>
+</html>
